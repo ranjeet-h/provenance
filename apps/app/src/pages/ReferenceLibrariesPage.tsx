@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Archive, Library, Upload } from "lucide-react";
 import { PageHeader } from "@/components/common/PageHeader";
 import { EmptyState } from "@/components/common/EmptyState";
 import { LoadingState } from "@/components/common/LoadingState";
@@ -102,11 +103,13 @@ export function ReferenceLibrariesPage() {
   return (
     <div>
       <PageHeader
+        eyebrow="Comparison corpora"
         title="Reference Libraries"
-        description="Read-only snapshots of analyzed sessions for separate historical comparisons."
+        description="Manage local, read-only archives. A session compares only against the libraries you explicitly select."
         actions={(
-          <label className="inline-flex cursor-pointer items-center rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent">
-            {importing ? "Importing…" : "Import .plagpack"}
+          <label className="inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-md shadow-primary/15 transition-colors hover:bg-primary/90 focus-within:outline-none focus-within:ring-2 focus-within:ring-ring">
+            <Upload className="h-4 w-4" aria-hidden />
+            {importing ? "Importing…" : "Import archive"}
             <input
               type="file"
               accept=".plagpack,application/zip"
@@ -118,8 +121,20 @@ export function ReferenceLibrariesPage() {
           </label>
         )}
       />
-      {error ? <p role="alert" className="mb-3 text-sm text-destructive">{error}</p> : null}
-      {message ? <p role="status" className="mb-3 text-sm text-muted-foreground">{message}</p> : null}
+      {librariesQuery.data ? (
+        <div className="mb-5 grid grid-cols-2 gap-3 sm:max-w-lg">
+          <div className="rounded-xl border border-border/80 bg-card px-4 py-3 shadow-sm shadow-slate-900/[0.02]">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">Local archives</p>
+            <p className="mt-1 text-xl font-semibold tracking-tight">{librariesQuery.data.length}</p>
+          </div>
+          <div className="rounded-xl border border-border/80 bg-card px-4 py-3 shadow-sm shadow-slate-900/[0.02]">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">Portable format</p>
+            <p className="mt-1 text-sm font-semibold tracking-tight">.plagpack · 50 MB max</p>
+          </div>
+        </div>
+      ) : null}
+      {error ? <p role="alert" className="mb-3 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{error}</p> : null}
+      {message ? <p role="status" className="mb-3 rounded-xl border border-primary/15 bg-primary/[0.04] p-3 text-sm text-foreground">{message}</p> : null}
       {librariesQuery.isPending ? (
         <LoadingState label="Loading reference libraries…" />
       ) : librariesQuery.isError ? (
@@ -131,25 +146,32 @@ export function ReferenceLibrariesPage() {
       ) : librariesQuery.data.length === 0 ? (
         <EmptyState
           title="No reference libraries yet"
-          description="Run an analysis in a completed session, then archive it from that session to create a historical library."
+          description="Run an analysis with at least two submissions, then archive that session. The snapshot can be selected later without mixing it into current-student scores."
+          icon={<Archive className="h-8 w-8" />}
         />
       ) : (
-        <div className="space-y-4">
-          <ul aria-label="Reference library list" className="divide-y rounded-lg border">
+        <div>
+          <ul aria-label="Reference library list" className="space-y-3">
             {librariesQuery.data.map((library) => (
-              <li key={library.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
-                <div>
-                  <h2 className="font-medium">{library.name}</h2>
-                  <p className="text-sm text-muted-foreground">
+              <li key={library.id} className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm shadow-slate-900/[0.025] sm:p-5">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/[0.075] text-primary">
+                    <Library className="h-[18px] w-[18px]" aria-hidden />
+                  </span>
+                  <div className="min-w-0">
+                  <h2 className="truncate text-base font-semibold tracking-tight">{library.name}</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
                     Archived from {library.source_session_name} · {new Date(library.created_at).toLocaleDateString()}
                   </p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="mt-2 text-xs text-muted-foreground">
                     Matching versions: fingerprints {library.fingerprint_version}, normalization {library.normalization_version}, modified {library.modified_version}
                   </p>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 xl:justify-end">
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
                     disabled={exportingId === library.id}
                     onClick={() => void onExport(library.id, library.name)}
@@ -169,11 +191,12 @@ export function ReferenceLibrariesPage() {
                     description="This deletes the archived snapshot and removes it from every session's selected comparison libraries."
                     confirmLabel="Remove library"
                     onConfirm={() => void onDelete(library.id)}
-                    trigger={<Button size="sm" variant="destructive">Remove</Button>}
+                    trigger={<Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive">Remove</Button>}
                   />
                 </div>
+                </div>
                 {selectedId === library.id ? (
-                  <div className="basis-full">
+                  <div className="mt-4 rounded-xl border border-border/70 bg-muted/20 p-3 sm:p-4">
                     {submissionsQuery.isPending ? (
                       <LoadingState label="Loading archived submissions…" />
                     ) : submissionsQuery.isError ? (

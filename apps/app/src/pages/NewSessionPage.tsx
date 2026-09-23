@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -56,36 +56,38 @@ export function NewSessionPage() {
   return (
     <div>
       <PageHeader
+        eyebrow="Assignment setup · Step 1 of 1"
         title="New session"
-        description="Sessions and students are stored locally in SQLite."
+        description="Start an assignment workspace. You can add students, paste text, or import supported digital documents next."
       />
       <form
         aria-label="New session"
-        className="max-w-md space-y-4"
+        className="max-w-2xl rounded-2xl border border-border/80 bg-card p-5 shadow-sm shadow-slate-900/[0.025] sm:p-7"
         onSubmit={(e) => {
           void handleSubmit(onSubmit)(e);
         }}
       >
-        <div className="space-y-1">
-          <label htmlFor="session-name" className="text-sm font-medium">
+        <div className="space-y-2">
+          <label htmlFor="session-name" className="text-sm font-semibold">
             Assignment name
           </label>
           <Input
             id="session-name"
-            placeholder="Biology Assignment 1"
+            placeholder="e.g. Biology · Cell structure"
             aria-invalid={errors.name ? true : undefined}
             className={cn(errors.name && "border-destructive")}
             {...register("name")}
           />
           {errors.name ? <p role="alert" className="text-sm text-destructive">{errors.name.message}</p> : null}
+          <p className="text-xs leading-relaxed text-muted-foreground">Choose a name you will recognize in your assignment list.</p>
         </div>
-        <div className="space-y-1">
-          <label htmlFor="session-subject" className="text-sm font-medium">
+        <div className="mt-6 space-y-2">
+          <label htmlFor="session-subject" className="text-sm font-semibold">
             Subject <span className="text-muted-foreground">(optional)</span>
           </label>
           <Input
             id="session-subject"
-            placeholder="Biology"
+            placeholder="e.g. Biology"
             aria-invalid={errors.subject ? true : undefined}
             className={cn(errors.subject && "border-destructive")}
             {...register("subject")}
@@ -93,13 +95,19 @@ export function NewSessionPage() {
           {errors.subject ? (
             <p role="alert" className="text-sm text-destructive">{errors.subject.message}</p>
           ) : null}
+          <p className="text-xs leading-relaxed text-muted-foreground">Used as a label to help distinguish assignments.</p>
         </div>
         {submitError ? (
           <p role="alert" className="text-sm text-destructive">{submitError}</p>
         ) : null}
-        <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Creating…" : "Create session"}
-        </Button>
+        <div className="mt-7 flex flex-col-reverse gap-2 border-t border-border/70 pt-5 sm:flex-row sm:justify-end">
+          <Button asChild variant="ghost">
+            <Link to="/sessions">Cancel</Link>
+          </Button>
+          <Button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Creating…" : "Create session"}
+          </Button>
+        </div>
       </form>
     </div>
   );

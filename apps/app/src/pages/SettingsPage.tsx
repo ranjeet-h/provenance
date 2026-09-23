@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Check, FileText, HardDrive, ShieldCheck } from "lucide-react";
 import { PageHeader } from "@/components/common/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,19 +23,66 @@ export function SettingsPage() {
   }
 
   return (
-    <div>
+    <div className="space-y-7">
       <PageHeader
+        eyebrow="Workspace preferences"
         title="Settings"
-        description="App preferences and text inspection tools."
+        description="Review how this workspace handles assignment data and the document types it accepts."
       />
-      <section aria-label="Shell diagnostics" className="rounded-lg border p-5">
-        <h2 className="text-base font-medium">Shell diagnostics</h2>
+      <section aria-label="Local data and supported sources" className="grid gap-4 lg:grid-cols-2">
+        <article className="rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/[0.06] to-card p-5 shadow-sm shadow-primary/[0.035] sm:p-6">
+          <div className="flex items-start gap-3">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+              <HardDrive className="h-5 w-5" aria-hidden />
+            </span>
+            <div>
+              <h2 className="text-base font-semibold tracking-tight">Stored on this device</h2>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                Sessions, submissions, analysis, and reference archives are kept in this local workspace.
+              </p>
+            </div>
+          </div>
+          <div className="mt-5 flex items-center gap-2 rounded-xl border border-white/80 bg-white/70 px-3 py-2.5 text-sm font-medium text-foreground">
+            <ShieldCheck className="h-4 w-4 text-emerald-700" aria-hidden />
+            Data remains in the desktop app
+          </div>
+        </article>
+
+        <article className="rounded-2xl border border-border/80 bg-card p-5 shadow-sm shadow-slate-900/[0.025] sm:p-6">
+          <div className="flex items-start gap-3">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-secondary text-secondary-foreground">
+              <FileText className="h-5 w-5" aria-hidden />
+            </span>
+            <div>
+              <h2 className="text-base font-semibold tracking-tight">Supported text sources</h2>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                Add pasted text or import a digital document with extractable text.
+              </p>
+            </div>
+          </div>
+          <ul className="mt-4 grid grid-cols-2 gap-2" aria-label="Supported input types">
+            {["Pasted text", "TXT", "Markdown", "Digital PDF", "DOCX"].map((source) => (
+              <li key={source} className="flex items-center gap-2 rounded-lg border border-border/70 bg-background px-2.5 py-2 text-xs font-medium">
+                <Check className="h-3.5 w-3.5 shrink-0 text-emerald-700" aria-hidden />
+                {source}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            Scanned PDFs and image files are not supported.
+          </p>
+        </article>
+      </section>
+
+      <section aria-label="Shell diagnostics" className="max-w-3xl rounded-2xl border border-border/80 bg-card p-5 shadow-sm shadow-slate-900/[0.025] sm:p-6">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Desktop connection</p>
+        <h2 className="mt-1 text-lg font-semibold tracking-tight">Check the app connection</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Verifies the React → Tauri command boundary. No assignment data is sent.
+          Sends only the name below to the local Tauri command; no assignment data is included.
         </p>
         <Separator className="my-4" />
         <form
-          className="flex max-w-md gap-2"
+          className="flex max-w-md flex-col gap-2 sm:flex-row"
           onSubmit={(e) => {
             void onSubmit(e);
           }}
@@ -45,21 +93,25 @@ export function SettingsPage() {
             value={name}
             onChange={(e) => setName(e.currentTarget.value)}
           />
-          <Button type="submit">Greet</Button>
+          <Button type="submit" className="sm:min-w-24">Test connection</Button>
         </form>
         {message !== "" ? (
-          <p aria-live="polite" className="mt-3 text-sm">
+          <p role="status" className="mt-3 rounded-lg bg-muted/50 px-3 py-2 text-sm">
             {message}
           </p>
         ) : null}
       </section>
 
-      <details className="mt-4 rounded-lg border p-5">
-        <summary className="cursor-pointer text-base font-medium">
-          Developer inspection
+      <details className="group max-w-3xl rounded-2xl border border-border/80 bg-card p-5 shadow-sm shadow-slate-900/[0.025] open:shadow-md sm:p-6">
+        <summary className="cursor-pointer list-none text-base font-semibold tracking-tight marker:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+          <span className="flex items-center justify-between gap-3">
+            Advanced text inspection
+            <span className="text-xs font-medium text-primary group-open:hidden">Open</span>
+            <span className="hidden text-xs font-medium text-primary group-open:inline">Close</span>
+          </span>
         </summary>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Shows normalized tokens and their original ranges. Temporary debug UI.
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          Inspect normalized tokens and their source ranges for troubleshooting.
         </p>
         <Separator className="my-4" />
         <InspectionTool />
@@ -93,7 +145,7 @@ function InspectionTool() {
 
   return (
     <div className="space-y-3">
-      <label htmlFor="inspect-input" className="text-sm font-medium">
+      <label htmlFor="inspect-input" className="text-sm font-semibold">
         Original text
       </label>
       <textarea
@@ -103,7 +155,7 @@ function InspectionTool() {
         onChange={(e) => setInput(e.currentTarget.value)}
         placeholder="Paste a paragraph with punctuation and capitals…"
         className={cn(
-          "flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm",
+          "flex min-h-[140px] w-full rounded-xl border border-input bg-background px-3 py-2.5 text-sm leading-relaxed shadow-sm shadow-slate-900/[0.02]",
           "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         )}
       />
@@ -119,11 +171,11 @@ function InspectionTool() {
             {result.tokens.length} tokens · {result.sentences.length} sentences ·{" "}
             normalization v{result.normalization_version}
           </p>
-          <p className="rounded-md border bg-muted/50 p-3 font-mono text-xs">
+          <p className="rounded-xl border bg-muted/50 p-3 font-mono text-xs leading-relaxed">
             {result.normalized_text}
           </p>
-          <div className="max-h-64 overflow-y-auto rounded-md border">
-            <table className="w-full text-left text-xs">
+          <div className="max-h-72 overflow-auto rounded-xl border">
+            <table className="w-full min-w-[420px] text-left text-xs">
               <thead>
                 <tr className="border-b">
                   <th className="p-2 font-medium">Token</th>

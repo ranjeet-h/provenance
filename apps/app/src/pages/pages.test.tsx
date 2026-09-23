@@ -105,17 +105,26 @@ describe("ReferenceLibrariesPage", () => {
     expect(
       await screen.findByRole("heading", { name: /^reference libraries$/i }),
     ).toBeInTheDocument();
-    expect(await screen.findByText(/run an analysis in a completed session/i)).toBeInTheDocument();
+    expect(await screen.findByText(/run an analysis with at least two submissions/i)).toBeInTheDocument();
   });
 });
 
 describe("SettingsPage diagnostics", () => {
+  it("makes local storage and supported digital text sources explicit", () => {
+    render(<SettingsPage />);
+    expect(screen.getByRole("heading", { name: /stored on this device/i })).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: /supported input types/i })).toHaveTextContent(
+      "Pasted textTXTMarkdownDigital PDFDOCX",
+    );
+    expect(screen.getByText(/scanned pdfs and image files are not supported/i)).toBeInTheDocument();
+  });
+
   it("greets through the Tauri boundary", async () => {
     const user = userEvent.setup();
     setInvokeImpl(async (_cmd, args) => `Hello, ${String(args?.["name"])}!`);
     render(<SettingsPage />);
     await user.type(screen.getByLabelText(/your name/i), "Ada");
-    await user.click(screen.getByRole("button", { name: /^greet$/i }));
+    await user.click(screen.getByRole("button", { name: /test connection/i }));
     expect(await screen.findByText("Hello, Ada!")).toBeInTheDocument();
   });
 
@@ -127,7 +136,7 @@ describe("SettingsPage diagnostics", () => {
       return "ok";
     });
     render(<SettingsPage />);
-    await user.click(screen.getByRole("button", { name: /^greet$/i }));
+    await user.click(screen.getByRole("button", { name: /test connection/i }));
     expect(seen[0]?.["name"]).toBe("Provenance");
   });
 
@@ -137,7 +146,7 @@ describe("SettingsPage diagnostics", () => {
       throw new Error("no shell");
     });
     render(<SettingsPage />);
-    await user.click(screen.getByRole("button", { name: /^greet$/i }));
+    await user.click(screen.getByRole("button", { name: /test connection/i }));
     expect(
       await screen.findByText(/not running in tauri shell/i),
     ).toBeInTheDocument();

@@ -157,7 +157,7 @@ export function SubmissionDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="max-h-[92vh] overflow-y-auto rounded-2xl p-5 shadow-2xl sm:max-w-2xl sm:p-7">
         <DialogHeader>
           <DialogTitle>
             {existing ? `Replace submission — ${studentName}` : `Add submission — ${studentName}`}
@@ -167,13 +167,15 @@ export function SubmissionDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div role="group" aria-label="Input method" className="flex gap-2">
+        <div role="group" aria-label="Input method" className="inline-flex w-fit rounded-xl border border-border/80 bg-muted/40 p-1">
           {(["paste", "upload"] as const).map((m) => (
             <Button
               key={m}
               type="button"
-              variant={mode === m ? "default" : "outline"}
+              variant={mode === m ? "default" : "ghost"}
               size="sm"
+              aria-pressed={mode === m}
+              className={mode === m ? "shadow-sm" : "text-muted-foreground"}
               onClick={() => {
                 setMode(m);
                 setError(null);
@@ -196,7 +198,7 @@ export function SubmissionDialog({
               onChange={(e) => setText(e.currentTarget.value)}
               placeholder="Paste the assignment text here…"
               className={cn(
-                "flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm",
+                "flex min-h-[180px] w-full rounded-xl border border-input bg-background px-3 py-3 text-sm leading-relaxed shadow-sm shadow-slate-900/[0.02]",
                 "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               )}
             />
@@ -211,8 +213,9 @@ export function SubmissionDialog({
               type="file"
               accept=".txt,.md,.markdown,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
               onChange={(e) => void onFileChosen(e.currentTarget.files?.[0])}
-              className="block w-full text-sm file:mr-3 file:rounded-md file:border file:border-input file:bg-secondary file:px-3 file:py-1.5 file:text-sm file:font-medium"
+              className="block w-full rounded-xl border border-dashed border-border bg-muted/20 p-3 text-sm file:mr-3 file:rounded-lg file:border file:border-input file:bg-background file:px-3 file:py-2 file:text-sm file:font-medium hover:file:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
+            <p className="text-xs leading-relaxed text-muted-foreground">Supported: TXT, Markdown, digital PDF, and DOCX. Scanned or image-only files are not supported.</p>
             {fileName ? (
               <p className="text-sm text-muted-foreground">Selected: {fileName}</p>
             ) : null}
@@ -220,12 +223,12 @@ export function SubmissionDialog({
         )}
 
         <div className="space-y-1">
-          <h3 className="text-sm font-medium">Preview</h3>
+          <h3 className="text-sm font-semibold">Preview</h3>
           {showPreview ? (
             preview !== "" ? (
               <pre
                 aria-label="Submission preview"
-                className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md border bg-muted/50 p-3 text-sm"
+                className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-xl border border-border/80 bg-muted/35 p-3.5 text-sm leading-relaxed"
               >
                 {preview}
                 {text.length > PREVIEW_CHARS ? (
@@ -249,11 +252,11 @@ export function SubmissionDialog({
         {error ? (
           <p role="alert" className="text-sm text-destructive">{error}</p>
         ) : null}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+        <DialogFooter className="flex-col-reverse gap-2 border-t border-border/70 pt-4 sm:flex-row sm:gap-2 sm:pt-5">
+          <Button className="w-full sm:w-auto" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={() => void onSave()} disabled={saving}>
+          <Button className="w-full sm:w-auto" onClick={() => void onSave()} disabled={saving}>
             {saving ? "Saving…" : existing ? "Replace submission" : "Save submission"}
           </Button>
         </DialogFooter>

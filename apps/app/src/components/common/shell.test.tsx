@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RouterProvider } from "@tanstack/react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createAppRouter } from "../../router";
 import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
@@ -14,7 +15,14 @@ import { Button } from "../ui/button";
 
 function renderAt(path: string) {
   const testRouter = createAppRouter(path);
-  return render(<RouterProvider router={testRouter} />);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={testRouter} />
+    </QueryClientProvider>,
+  );
 }
 
 describe("AppShell mobile navigation", () => {
