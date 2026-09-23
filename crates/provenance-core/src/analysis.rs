@@ -5,22 +5,144 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
 use crate::domain::Submission;
 use crate::error::CoreError;
 use crate::service::list_students;
-use crate::storage::{SessionRepo, SubmissionRepo};
+use crate::storage::{AnalysisRepo, SessionRepo, SubmissionRepo};
 use provenance_match::{
     apply_exclusion, canonicalize, common_token_mask, compare_documents, find_modified_matches,
     is_common_range, prompt_token_mask, shingle_document_frequency, union_len, CommonTextConfig,
-    ExactConfig, ExclusionReason, ModifiedConfig, TokenMatch, COMMON_TEXT_VERSION,
+    ExactConfig, ExclusionReason, ModifiedConfig, ModifiedMatch, TokenMatch, COMMON_TEXT_VERSION,
     FINGERPRINT_VERSION, MODIFIED_VERSION, NORMALIZATION_VERSION,
 };
 
 /// Document-frequency exclusion needs statistical meaning: below this many
 /// analyzed documents every shared passage is case evidence, so DF is off.
 pub const MIN_DOCS_FOR_DF: usize = 4;
+/// Bump when session-level exclusions, interval union, or coverage semantics change.
+pub const SESSION_SCORING_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisStage {
+    Preparing,
+    Exact,
+    Modified,
+    Aligning,
+    Scoring,
+    Saving,
+    Complete,
+    Failed,
+}
+
+/// Monotonic progress for a single session analysis invocation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnalysisProgress {
+    pub session_id: String,
+    pub stage: AnalysisStage,
+    /// Monotonic fraction from 0.0 through 1.0 across all stages.
+    pub fraction: f64,
+    pub completed_pairs: usize,
+    pub total_pairs: usize,
+    pub cached_pairs: usize,
+}
+
+struct RawPairMatches {
+    left_index: usize,
+    right_index: usize,
+    cache_key: String,
+    cache_hit: bool,
+    exact: Vec<TokenMatch>,
+    modified: Vec<ModifiedMatch>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RawPairEvidenceCache {
+    exact: Vec<TokenMatch>,
+    modified: Vec<ModifiedMatch>,
+}
+
+fn raw_pair_engine_key() -> String {
+    let exact = ExactConfig::default();
+    let modified = ModifiedConfig::default();
+    format!("exact-{exact:?}-modified-{modified:?}-normalization-{NORMALIZATION_VERSION}")
+}
+
+fn raw_pair_cache_key(
+    session_id: &str,
+    student_a_id: &str,
+    student_b_id: &str,
+    source_hash_a: &str,
+    source_hash_b: &str,
+) -> String {
+    let engine_key = raw_pair_engine_key();
+    let canonical = serde_json::to_vec(&(
+        session_id,
+        student_a_id,
+        student_b_id,
+        source_hash_a,
+        source_hash_b,
+        engine_key,
+    ))
+    .expect("serializing a tuple of strings cannot fail");
+    hex::encode(Sha256::digest(canonical))
+}
+
+/// Hash every input that affects scored session output. Cached analysis is
+/// served only when this exact digest matches.
+pub async fn session_analysis_input_hash(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> Result<String, CoreError> {
+    let session = SessionRepo::get(pool, session_id).await?;
+    let mut submissions = SubmissionRepo::list_by_session(pool, session_id).await?;
+    submissions.sort_by(|a, b| a.student_id.cmp(&b.student_id));
+    let submission_inputs: Vec<(String, String)> = submissions
+        .iter()
+        .map(|submission| {
+            (
+                submission.student_id.clone(),
+                hex::encode(Sha256::digest(submission.original_text.as_bytes())),
+            )
+        })
+        .collect();
+    let input = serde_json::to_vec(&(
+        session_id,
+        session.assignment_prompt,
+        session.excluded_reference_text,
+        session.exclude_common_text,
+        submission_inputs,
+        FINGERPRINT_VERSION,
+        NORMALIZATION_VERSION,
+        COMMON_TEXT_VERSION,
+        MODIFIED_VERSION,
+        SESSION_SCORING_VERSION,
+    ))
+    .map_err(|_| CoreError::validation("could not fingerprint session analysis inputs"))?;
+    Ok(hex::encode(Sha256::digest(input)))
+}
+
+fn emit_progress<F: FnMut(AnalysisProgress)>(
+    callback: &mut F,
+    session_id: &str,
+    stage: AnalysisStage,
+    fraction: f64,
+    completed_pairs: usize,
+    total_pairs: usize,
+    cached_pairs: usize,
+) {
+    callback(AnalysisProgress {
+        session_id: session_id.to_string(),
+        stage,
+        fraction,
+        completed_pairs,
+        total_pairs,
+        cached_pairs,
+    });
+}
 
 /// One passage with evidence spans on both sides.
 /// Token ranges are ordinals (end-exclusive); char ranges index original text.
@@ -163,6 +285,29 @@ pub async fn analyze_session_exact(
     pool: &SqlitePool,
     session_id: &str,
 ) -> Result<ExactAnalysis, CoreError> {
+    analyze_session_with_progress(pool, session_id, |_| {}).await
+}
+
+/// Analyze a session while reporting real exact, modified, alignment, and
+/// scoring work. `fraction` never decreases; callbacks are synchronous and
+/// must remain lightweight (for example, enqueueing a Tauri event).
+pub async fn analyze_session_with_progress<F>(
+    pool: &SqlitePool,
+    session_id: &str,
+    mut on_progress: F,
+) -> Result<ExactAnalysis, CoreError>
+where
+    F: FnMut(AnalysisProgress),
+{
+    emit_progress(
+        &mut on_progress,
+        session_id,
+        AnalysisStage::Preparing,
+        0.0,
+        0,
+        0,
+        0,
+    );
     let session = SessionRepo::get(pool, session_id).await?;
     let students = list_students(pool, session_id).await?;
     let submissions = SubmissionRepo::list_by_session(pool, session_id).await?;
@@ -175,6 +320,7 @@ pub async fn analyze_session_exact(
 
     // Canonicalize every submission that has text.
     let mut ids: Vec<String> = Vec::new();
+    let mut content_hashes: Vec<String> = Vec::new();
     let mut docs: Vec<provenance_match::CanonicalDocument> = Vec::new();
     let mut token_lists: Vec<Vec<String>> = Vec::new();
     for student in &students {
@@ -182,6 +328,7 @@ pub async fn analyze_session_exact(
             let doc = canonicalize(&sub.original_text);
             token_lists.push(doc.tokens.iter().map(|t| t.normalized.clone()).collect());
             ids.push(student.id.clone());
+            content_hashes.push(hex::encode(Sha256::digest(sub.original_text.as_bytes())));
             docs.push(doc);
         }
     }
@@ -239,6 +386,7 @@ pub async fn analyze_session_exact(
 
     let exact_cfg = ExactConfig::default();
     let modified_cfg = ModifiedConfig::default();
+    let total_pairs = docs.len().saturating_mul(docs.len().saturating_sub(1)) / 2;
 
     // Eligible text per document: all tokens minus teacher-approved
     // (prompt/reference) exclusions. Common session text stays eligible —
@@ -252,191 +400,282 @@ pub async fn analyze_session_exact(
         })
         .collect();
 
-    let mut pairs = Vec::new();
-    let mut kept_spans: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
-    let mut kept_exact_spans: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
-    let mut kept_modified_spans: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
-
+    // Compute raw pair evidence in separate passes. This keeps progress
+    // truthful and creates a clean seam for the versioned raw-evidence cache.
+    let mut raw_pairs = Vec::with_capacity(total_pairs);
+    emit_progress(
+        &mut on_progress,
+        session_id,
+        AnalysisStage::Exact,
+        0.05,
+        0,
+        total_pairs,
+        0,
+    );
+    let mut completed_pairs = 0;
+    let mut cached_pairs = 0;
     for i in 0..docs.len() {
         for j in (i + 1)..docs.len() {
-            let matches: Vec<TokenMatch> = compare_documents(&docs[i], &docs[j], exact_cfg);
-            // Scoring exclusion is teacher-approved material only; common
-            // session text stays scored and is classified per passage below.
-            let (counted_a, excluded_a) = apply_exclusion(&matches, true, &prompt_spans[i]);
-            let (counted_b, excluded_b) = apply_exclusion(&matches, false, &prompt_spans[j]);
-
-            // Kept passages: intersect each match with its counted ranges,
-            // mapping A-side segments to B via the match offset.
-            let mut passages = Vec::new();
-            for m in &matches {
-                let offset = m.b_start as i64 - m.a_start as i64;
-                for (s, e) in intersect((m.a_start, m.a_end), &counted_a) {
-                    let bs = (s as i64 + offset) as usize;
-                    let be = (e as i64 + offset) as usize;
-                    if be <= docs[j].tokens.len() {
-                        let (acs, ace) = char_span(&docs[i], s, e);
-                        let (bcs, bce) = char_span(&docs[j], bs, be);
-                        passages.push(PassageEvidence {
-                            kind: PassageKind::Exact,
-                            identity: None,
-                            common_text: is_common_range(s, e, &common_masks[i])
-                                || is_common_range(bs, be, &common_masks[j]),
-                            a_token_start: s,
-                            a_token_end: e,
-                            b_token_start: bs,
-                            b_token_end: be,
-                            a_char_start: acs,
-                            a_char_end: ace,
-                            b_char_start: bcs,
-                            b_char_end: bce,
-                            tokens: e - s,
-                        });
-                    }
+            let cache_key = raw_pair_cache_key(
+                session_id,
+                &ids[i],
+                &ids[j],
+                &content_hashes[i],
+                &content_hashes[j],
+            );
+            let cached = AnalysisRepo::raw_pair_evidence(pool, &cache_key).await?;
+            let (exact, modified, cache_hit) = if let Some(raw) = cached {
+                if raw.session_id != session_id
+                    || raw.student_a_id != ids[i]
+                    || raw.student_b_id != ids[j]
+                    || raw.source_hash_a != content_hashes[i]
+                    || raw.source_hash_b != content_hashes[j]
+                    || raw.engine_key != raw_pair_engine_key()
+                {
+                    return Err(CoreError::validation(
+                        "stored pair evidence metadata does not match current inputs",
+                    ));
                 }
+                let parsed: RawPairEvidenceCache = serde_json::from_str(&raw.evidence_json).map_err(|_| {
+                    CoreError::validation(
+                        "stored pair evidence is corrupt; clear the affected session cache before analyzing",
+                    )
+                })?;
+                (parsed.exact, parsed.modified, true)
+            } else {
+                (
+                    compare_documents(&docs[i], &docs[j], exact_cfg),
+                    Vec::new(),
+                    false,
+                )
+            };
+            if cache_hit {
+                cached_pairs += 1;
             }
-
-            // Modified evidence: aligned against the same token streams,
-            // clipped against raw exact spans, then exclusion-filtered.
+            raw_pairs.push(RawPairMatches {
+                left_index: i,
+                right_index: j,
+                cache_key,
+                cache_hit,
+                exact,
+                modified,
+            });
+            completed_pairs += 1;
+            emit_progress(
+                &mut on_progress,
+                session_id,
+                AnalysisStage::Exact,
+                0.05 + 0.25 * completed_pairs as f64 / total_pairs.max(1) as f64,
+                completed_pairs,
+                total_pairs,
+                cached_pairs,
+            );
+        }
+    }
+    emit_progress(
+        &mut on_progress,
+        session_id,
+        AnalysisStage::Modified,
+        0.30,
+        0,
+        total_pairs,
+        cached_pairs,
+    );
+    completed_pairs = 0;
+    for raw in &mut raw_pairs {
+        if !raw.cache_hit {
             let raw_exact_a: Vec<(usize, usize)> =
-                matches.iter().map(|m| (m.a_start, m.a_end)).collect();
+                raw.exact.iter().map(|m| (m.a_start, m.a_end)).collect();
             let raw_exact_b: Vec<(usize, usize)> =
-                matches.iter().map(|m| (m.b_start, m.b_end)).collect();
-            let modified = find_modified_matches(
-                &token_lists[i],
-                &token_lists[j],
+                raw.exact.iter().map(|m| (m.b_start, m.b_end)).collect();
+            raw.modified = find_modified_matches(
+                &token_lists[raw.left_index],
+                &token_lists[raw.right_index],
                 &raw_exact_a,
                 &raw_exact_b,
                 exact_cfg,
                 modified_cfg,
             );
-            let mut mod_a_ranges: Vec<(usize, usize)> = Vec::new();
-            let mut mod_b_ranges: Vec<(usize, usize)> = Vec::new();
-            let mut mod_excluded: Vec<ExcludedEvidence> = Vec::new();
-            for mm in &modified {
-                let (kept_a, excl_a) = apply_exclusion(
-                    &[TokenMatch {
-                        a_start: mm.a_start,
-                        a_end: mm.a_end,
-                        b_start: mm.b_start,
-                        b_end: mm.b_end,
-                    }],
-                    true,
-                    &prompt_spans[i],
-                );
-                let (kept_b, excl_b) = apply_exclusion(
-                    &[TokenMatch {
-                        a_start: mm.a_start,
-                        a_end: mm.a_end,
-                        b_start: mm.b_start,
-                        b_end: mm.b_end,
-                    }],
-                    false,
-                    &prompt_spans[j],
-                );
-                for (s, e) in kept_a {
-                    // Only spans that stay reportable length after filtering.
-                    if e - s < modified_cfg.min_tokens {
-                        continue;
-                    }
-                    // Map to B through the alignment path carried on the
-                    // match (relative indexing): A and B ranges can differ
-                    // in length when insertions/deletions exist, so
-                    // constant-offset mapping is invalid here.
-                    let mut b_positions: Vec<usize> = Vec::new();
-                    for t in s..e {
-                        if let Some(bp) =
-                            mm.a_to_b.get(t.wrapping_sub(mm.a_start)).copied().flatten()
-                        {
-                            b_positions.push(bp);
-                        }
-                    }
-                    if b_positions.len() < modified_cfg.min_tokens {
-                        continue;
-                    }
-                    let bs = b_positions[0];
-                    let be = b_positions[b_positions.len() - 1] + 1;
-                    for (ks, ke) in intersect((bs, be), &kept_b) {
-                        if ke - ks < modified_cfg.min_tokens {
-                            continue;
-                        }
-                        // Map back through the path: A tokens whose B
-                        // position falls inside the kept B piece.
-                        let mut back: Vec<usize> = Vec::new();
-                        for t in s..e {
-                            match mm.a_to_b.get(t.wrapping_sub(mm.a_start)).copied().flatten() {
-                                Some(bp) if bp >= ks && bp < ke => back.push(t),
-                                _ => {}
-                            }
-                        }
-                        if back.len() < modified_cfg.min_tokens {
-                            continue;
-                        }
-                        let back_s = back[0];
-                        let back_e = back[back.len() - 1] + 1;
-                        if back_e > docs[i].tokens.len() || ke > docs[j].tokens.len() {
-                            continue;
-                        }
-                        let (acs, ace) = char_span(&docs[i], back_s, back_e);
-                        let (bcs, bce) = char_span(&docs[j], ks, ke);
-                        mod_a_ranges.push((back_s, back_e));
-                        mod_b_ranges.push((ks, ke));
-                        passages.push(PassageEvidence {
-                            kind: PassageKind::Modified,
-                            identity: Some(mm.identity),
-                            common_text: is_common_range(back_s, back_e, &common_masks[i])
-                                || is_common_range(ks, ke, &common_masks[j]),
-                            a_token_start: back_s,
-                            a_token_end: back_e,
-                            b_token_start: ks,
-                            b_token_end: ke,
-                            a_char_start: acs,
-                            a_char_end: ace,
-                            b_char_start: bcs,
-                            b_char_end: bce,
-                            tokens: back_e - back_s,
-                        });
-                    }
-                }
-                for (side, spans, doc) in [
-                    (ExclusionSide::A, &excl_a, &docs[i]),
-                    (ExclusionSide::B, &excl_b, &docs[j]),
-                ] {
-                    for span in spans {
-                        let (cs, ce) = char_span(doc, span.token_start, span.token_end);
-                        mod_excluded.push(ExcludedEvidence {
-                            side,
-                            token_start: span.token_start,
-                            token_end: span.token_end,
-                            char_start: cs,
-                            char_end: ce,
-                            reason: span.reason,
-                            tokens: span.token_end - span.token_start,
-                        });
-                    }
+            let evidence_json = serde_json::to_string(&RawPairEvidenceCache {
+                exact: raw.exact.clone(),
+                modified: raw.modified.clone(),
+            })
+            .map_err(|_| CoreError::validation("could not persist raw pair evidence"))?;
+            AnalysisRepo::save_raw_pair_evidence(
+                pool,
+                &raw.cache_key,
+                session_id,
+                &ids[raw.left_index],
+                &ids[raw.right_index],
+                &content_hashes[raw.left_index],
+                &content_hashes[raw.right_index],
+                &raw_pair_engine_key(),
+                &evidence_json,
+            )
+            .await?;
+        }
+        completed_pairs += 1;
+        emit_progress(
+            &mut on_progress,
+            session_id,
+            AnalysisStage::Modified,
+            0.30 + 0.30 * completed_pairs as f64 / total_pairs.max(1) as f64,
+            completed_pairs,
+            total_pairs,
+            cached_pairs,
+        );
+    }
+
+    let mut pairs = Vec::new();
+    let mut kept_spans: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
+    let mut kept_exact_spans: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
+    let mut kept_modified_spans: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
+
+    emit_progress(
+        &mut on_progress,
+        session_id,
+        AnalysisStage::Aligning,
+        0.60,
+        0,
+        total_pairs,
+        cached_pairs,
+    );
+    completed_pairs = 0;
+    for raw in raw_pairs {
+        let i = raw.left_index;
+        let j = raw.right_index;
+        let matches = raw.exact;
+        // Scoring exclusion is teacher-approved material only; common
+        // session text stays scored and is classified per passage below.
+        let (counted_a, excluded_a) = apply_exclusion(&matches, true, &prompt_spans[i]);
+        let (counted_b, excluded_b) = apply_exclusion(&matches, false, &prompt_spans[j]);
+
+        // Kept passages: intersect each match with its counted ranges,
+        // mapping A-side segments to B via the match offset.
+        let mut passages = Vec::new();
+        for m in &matches {
+            let offset = m.b_start as i64 - m.a_start as i64;
+            for (s, e) in intersect((m.a_start, m.a_end), &counted_a) {
+                let bs = (s as i64 + offset) as usize;
+                let be = (e as i64 + offset) as usize;
+                if be <= docs[j].tokens.len() {
+                    let (acs, ace) = char_span(&docs[i], s, e);
+                    let (bcs, bce) = char_span(&docs[j], bs, be);
+                    passages.push(PassageEvidence {
+                        kind: PassageKind::Exact,
+                        identity: None,
+                        common_text: is_common_range(s, e, &common_masks[i])
+                            || is_common_range(bs, be, &common_masks[j]),
+                        a_token_start: s,
+                        a_token_end: e,
+                        b_token_start: bs,
+                        b_token_end: be,
+                        a_char_start: acs,
+                        a_char_end: ace,
+                        b_char_start: bcs,
+                        b_char_end: bce,
+                        tokens: e - s,
+                    });
                 }
             }
-            passages.sort_by_key(|p| (p.a_token_start, p.b_token_start));
+        }
 
-            // Coverage unions exact + modified kept spans over eligible text.
-            let mut union_a = counted_a.clone();
-            union_a.extend(mod_a_ranges.iter().copied());
-            let mut union_b = counted_b.clone();
-            union_b.extend(mod_b_ranges.iter().copied());
-            let coverage_a = eligible_coverage(&union_a, eligible[i]);
-            let coverage_b = eligible_coverage(&union_b, eligible[j]);
-            let exact_coverage_a = eligible_coverage(&counted_a, eligible[i]);
-            let exact_coverage_b = eligible_coverage(&counted_b, eligible[j]);
-            let modified_coverage_a = eligible_coverage(&mod_a_ranges, eligible[i]);
-            let modified_coverage_b = eligible_coverage(&mod_b_ranges, eligible[j]);
-
-            let mut excluded = Vec::new();
+        // Modified evidence: aligned against the same token streams,
+        // clipped against raw exact spans, then exclusion-filtered.
+        let modified = raw.modified;
+        let mut mod_a_ranges: Vec<(usize, usize)> = Vec::new();
+        let mut mod_b_ranges: Vec<(usize, usize)> = Vec::new();
+        let mut mod_excluded: Vec<ExcludedEvidence> = Vec::new();
+        for mm in &modified {
+            let (kept_a, excl_a) = apply_exclusion(
+                &[TokenMatch {
+                    a_start: mm.a_start,
+                    a_end: mm.a_end,
+                    b_start: mm.b_start,
+                    b_end: mm.b_end,
+                }],
+                true,
+                &prompt_spans[i],
+            );
+            let (kept_b, excl_b) = apply_exclusion(
+                &[TokenMatch {
+                    a_start: mm.a_start,
+                    a_end: mm.a_end,
+                    b_start: mm.b_start,
+                    b_end: mm.b_end,
+                }],
+                false,
+                &prompt_spans[j],
+            );
+            for (s, e) in kept_a {
+                // Only spans that stay reportable length after filtering.
+                if e - s < modified_cfg.min_tokens {
+                    continue;
+                }
+                // Map to B through the alignment path carried on the
+                // match (relative indexing): A and B ranges can differ
+                // in length when insertions/deletions exist, so
+                // constant-offset mapping is invalid here.
+                let mut b_positions: Vec<usize> = Vec::new();
+                for t in s..e {
+                    if let Some(bp) = mm.a_to_b.get(t.wrapping_sub(mm.a_start)).copied().flatten() {
+                        b_positions.push(bp);
+                    }
+                }
+                if b_positions.len() < modified_cfg.min_tokens {
+                    continue;
+                }
+                let bs = b_positions[0];
+                let be = b_positions[b_positions.len() - 1] + 1;
+                for (ks, ke) in intersect((bs, be), &kept_b) {
+                    if ke - ks < modified_cfg.min_tokens {
+                        continue;
+                    }
+                    // Map back through the path: A tokens whose B
+                    // position falls inside the kept B piece.
+                    let mut back: Vec<usize> = Vec::new();
+                    for t in s..e {
+                        match mm.a_to_b.get(t.wrapping_sub(mm.a_start)).copied().flatten() {
+                            Some(bp) if bp >= ks && bp < ke => back.push(t),
+                            _ => {}
+                        }
+                    }
+                    if back.len() < modified_cfg.min_tokens {
+                        continue;
+                    }
+                    let back_s = back[0];
+                    let back_e = back[back.len() - 1] + 1;
+                    if back_e > docs[i].tokens.len() || ke > docs[j].tokens.len() {
+                        continue;
+                    }
+                    let (acs, ace) = char_span(&docs[i], back_s, back_e);
+                    let (bcs, bce) = char_span(&docs[j], ks, ke);
+                    mod_a_ranges.push((back_s, back_e));
+                    mod_b_ranges.push((ks, ke));
+                    passages.push(PassageEvidence {
+                        kind: PassageKind::Modified,
+                        identity: Some(mm.identity),
+                        common_text: is_common_range(back_s, back_e, &common_masks[i])
+                            || is_common_range(ks, ke, &common_masks[j]),
+                        a_token_start: back_s,
+                        a_token_end: back_e,
+                        b_token_start: ks,
+                        b_token_end: ke,
+                        a_char_start: acs,
+                        a_char_end: ace,
+                        b_char_start: bcs,
+                        b_char_end: bce,
+                        tokens: back_e - back_s,
+                    });
+                }
+            }
             for (side, spans, doc) in [
-                (ExclusionSide::A, &excluded_a, &docs[i]),
-                (ExclusionSide::B, &excluded_b, &docs[j]),
+                (ExclusionSide::A, &excl_a, &docs[i]),
+                (ExclusionSide::B, &excl_b, &docs[j]),
             ] {
                 for span in spans {
                     let (cs, ce) = char_span(doc, span.token_start, span.token_end);
-                    excluded.push(ExcludedEvidence {
+                    mod_excluded.push(ExcludedEvidence {
                         side,
                         token_start: span.token_start,
                         token_end: span.token_end,
@@ -447,53 +686,105 @@ pub async fn analyze_session_exact(
                     });
                 }
             }
-            excluded.sort_by_key(|e| (e.side as u8, e.token_start));
-            excluded.extend(mod_excluded);
-            excluded.sort_by_key(|e| (e.side as u8, e.token_start));
-
-            for &(s, e) in &counted_a {
-                kept_spans.entry(ids[i].clone()).or_default().push((s, e));
-                kept_exact_spans
-                    .entry(ids[i].clone())
-                    .or_default()
-                    .push((s, e));
-            }
-            for &(s, e) in &counted_b {
-                kept_spans.entry(ids[j].clone()).or_default().push((s, e));
-                kept_exact_spans
-                    .entry(ids[j].clone())
-                    .or_default()
-                    .push((s, e));
-            }
-            for &(s, e) in &mod_a_ranges {
-                kept_spans.entry(ids[i].clone()).or_default().push((s, e));
-                kept_modified_spans
-                    .entry(ids[i].clone())
-                    .or_default()
-                    .push((s, e));
-            }
-            for &(s, e) in &mod_b_ranges {
-                kept_spans.entry(ids[j].clone()).or_default().push((s, e));
-                kept_modified_spans
-                    .entry(ids[j].clone())
-                    .or_default()
-                    .push((s, e));
-            }
-
-            pairs.push(PairAnalysis {
-                a_student_id: ids[i].clone(),
-                b_student_id: ids[j].clone(),
-                coverage_a,
-                coverage_b,
-                exact_coverage_a,
-                exact_coverage_b,
-                modified_coverage_a,
-                modified_coverage_b,
-                passages,
-                excluded,
-            });
         }
+        passages.sort_by_key(|p| (p.a_token_start, p.b_token_start));
+
+        // Coverage unions exact + modified kept spans over eligible text.
+        let mut union_a = counted_a.clone();
+        union_a.extend(mod_a_ranges.iter().copied());
+        let mut union_b = counted_b.clone();
+        union_b.extend(mod_b_ranges.iter().copied());
+        let coverage_a = eligible_coverage(&union_a, eligible[i]);
+        let coverage_b = eligible_coverage(&union_b, eligible[j]);
+        let exact_coverage_a = eligible_coverage(&counted_a, eligible[i]);
+        let exact_coverage_b = eligible_coverage(&counted_b, eligible[j]);
+        let modified_coverage_a = eligible_coverage(&mod_a_ranges, eligible[i]);
+        let modified_coverage_b = eligible_coverage(&mod_b_ranges, eligible[j]);
+
+        let mut excluded = Vec::new();
+        for (side, spans, doc) in [
+            (ExclusionSide::A, &excluded_a, &docs[i]),
+            (ExclusionSide::B, &excluded_b, &docs[j]),
+        ] {
+            for span in spans {
+                let (cs, ce) = char_span(doc, span.token_start, span.token_end);
+                excluded.push(ExcludedEvidence {
+                    side,
+                    token_start: span.token_start,
+                    token_end: span.token_end,
+                    char_start: cs,
+                    char_end: ce,
+                    reason: span.reason,
+                    tokens: span.token_end - span.token_start,
+                });
+            }
+        }
+        excluded.sort_by_key(|e| (e.side as u8, e.token_start));
+        excluded.extend(mod_excluded);
+        excluded.sort_by_key(|e| (e.side as u8, e.token_start));
+
+        for &(s, e) in &counted_a {
+            kept_spans.entry(ids[i].clone()).or_default().push((s, e));
+            kept_exact_spans
+                .entry(ids[i].clone())
+                .or_default()
+                .push((s, e));
+        }
+        for &(s, e) in &counted_b {
+            kept_spans.entry(ids[j].clone()).or_default().push((s, e));
+            kept_exact_spans
+                .entry(ids[j].clone())
+                .or_default()
+                .push((s, e));
+        }
+        for &(s, e) in &mod_a_ranges {
+            kept_spans.entry(ids[i].clone()).or_default().push((s, e));
+            kept_modified_spans
+                .entry(ids[i].clone())
+                .or_default()
+                .push((s, e));
+        }
+        for &(s, e) in &mod_b_ranges {
+            kept_spans.entry(ids[j].clone()).or_default().push((s, e));
+            kept_modified_spans
+                .entry(ids[j].clone())
+                .or_default()
+                .push((s, e));
+        }
+
+        pairs.push(PairAnalysis {
+            a_student_id: ids[i].clone(),
+            b_student_id: ids[j].clone(),
+            coverage_a,
+            coverage_b,
+            exact_coverage_a,
+            exact_coverage_b,
+            modified_coverage_a,
+            modified_coverage_b,
+            passages,
+            excluded,
+        });
+        completed_pairs += 1;
+        emit_progress(
+            &mut on_progress,
+            session_id,
+            AnalysisStage::Aligning,
+            0.60 + 0.25 * completed_pairs as f64 / total_pairs.max(1) as f64,
+            completed_pairs,
+            total_pairs,
+            cached_pairs,
+        );
     }
+
+    emit_progress(
+        &mut on_progress,
+        session_id,
+        AnalysisStage::Scoring,
+        0.90,
+        total_pairs,
+        total_pairs,
+        cached_pairs,
+    );
 
     let totals: HashMap<&str, usize> = ids
         .iter()

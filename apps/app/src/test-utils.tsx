@@ -26,6 +26,7 @@ export function createFakeSessions(seed?: Partial<FakeDb>): {
     students: seed?.students ? [...seed.students] : [],
     submissions: seed?.submissions ? [...seed.submissions] : [],
   };
+  const savedAnalyses = new Map<string, unknown>();
   let counter = 1000;
   const nextId = (prefix: string): string => `${prefix}-${String((counter += 1))}`;
 
@@ -247,8 +248,13 @@ export function createFakeSessions(seed?: Partial<FakeDb>): {
       }
       case "list_submissions":
         return Promise.resolve(db.submissions.filter((s) => s.session_id === args["sessionId"]));
-      case "analyze_session_exact":
-        return Promise.resolve(fakeAnalyze(db, String(args["sessionId"])));
+      case "get_session_analysis":
+        return Promise.resolve(savedAnalyses.get(String(args["sessionId"])) ?? null);
+      case "analyze_session": {
+        const result = fakeAnalyze(db, String(args["sessionId"]));
+        savedAnalyses.set(String(args["sessionId"]), result);
+        return Promise.resolve(result);
+      }
       default:
         return fail("unknown", `unexpected command ${cmd}`);
     }

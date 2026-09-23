@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { Trash2, UserPlus } from "lucide-react";
 import { PageHeader } from "@/components/common/PageHeader";
 import { EmptyState } from "@/components/common/EmptyState";
@@ -25,6 +25,13 @@ import {
   sourceLabel,
   type Session,
 } from "@/lib/sessions";
+
+async function invalidateAnalysisReport(queryClient: QueryClient, sessionId: string): Promise<void> {
+  const queryKey = ["analysis", sessionId] as const;
+  await queryClient.cancelQueries({ queryKey });
+  queryClient.setQueryData(queryKey, null);
+  await queryClient.invalidateQueries({ queryKey });
+}
 
 function RenameSessionForm({ session }: { session: Session }) {
   const queryClient = useQueryClient();
@@ -85,6 +92,7 @@ function SessionSettingsForm({ session }: { session: Session }) {
         excludedReferenceText: reference.trim() === "" ? null : reference,
         excludeCommonText: excludeCommon,
       });
+      await invalidateAnalysisReport(queryClient, session.id);
       await queryClient.invalidateQueries({ queryKey: ["session", session.id] });
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });
       setMessage({ kind: "ok", text: "Settings saved." });
@@ -214,6 +222,7 @@ export function SessionDetailPage() {  const { sessionId } = useParams({ strict:
   );
 
   async function refreshSubmissions(): Promise<void> {
+    await invalidateAnalysisReport(queryClient, session.id);
     await queryClient.invalidateQueries({ queryKey: ["submissions", session.id] });
   }
 
@@ -227,6 +236,7 @@ export function SessionDetailPage() {  const { sessionId } = useParams({ strict:
     try {
       await addStudent(session.id, studentName);
       setStudentName("");
+      await invalidateAnalysisReport(queryClient, session.id);
       await queryClient.invalidateQueries({ queryKey: ["students", session.id] });
     } catch (err) {
       setStudentError(asSessionsError(err).message);
@@ -237,6 +247,7 @@ export function SessionDetailPage() {  const { sessionId } = useParams({ strict:
     setStudentError(null);
     try {
       await removeStudent(id);
+      await invalidateAnalysisReport(queryClient, session.id);
       await queryClient.invalidateQueries({ queryKey: ["students", session.id] });
     } catch (err) {
       setStudentError(asSessionsError(err).message);

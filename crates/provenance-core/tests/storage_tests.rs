@@ -51,14 +51,22 @@ fn migration_is_idempotent_and_tables_exist() {
     let tables: Vec<String> = block_on(
         sqlx::query_scalar(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN
-             ('sessions', 'students', 'submissions', 'schema_version') ORDER BY name",
+             ('sessions', 'students', 'submissions', 'schema_version',
+              'analysis_results', 'raw_pair_analyses') ORDER BY name",
         )
         .fetch_all(&pool),
     )
     .expect("tables readable");
     assert_eq!(
         tables,
-        vec!["schema_version", "sessions", "students", "submissions"]
+        vec![
+            "analysis_results",
+            "raw_pair_analyses",
+            "schema_version",
+            "sessions",
+            "students",
+            "submissions"
+        ]
     );
 
     let removed_feature_tables: Vec<String> = block_on(
@@ -340,6 +348,71 @@ fn v2_database_migrates_to_v3_with_sane_defaults() {
     assert_eq!(kept.assignment_prompt, None);
     assert_eq!(kept.excluded_reference_text, None);
     assert!(kept.exclude_common_text, "DF flagging defaults on");
+}
+
+#[test]
+fn v3_database_migrates_analysis_result_and_raw_pair_tables() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("v3.db");
+    let pool = block_on(storage::connect(&path)).expect("connect");
+    block_on(
+        sqlx::query(
+            "CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+         CREATE TABLE sessions (id TEXT PRIMARY KEY);
+         INSERT INTO schema_version (version) VALUES (3);
+         INSERT INTO sessions (id) VALUES ('kept-session');",
+        )
+        .execute(&pool),
+    )
+    .expect("v3 setup");
+    drop(pool);
+
+    let pool = block_on(storage::open(&path)).expect("migrate to v4");
+    let version: i64 = block_on(
+        sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetch_one(&pool),
+    )
+    .expect("version");
+    assert_eq!(version, SCHEMA_VERSION);
+    let session_id: String =
+        block_on(sqlx::query_scalar("SELECT id FROM sessions").fetch_one(&pool))
+            .expect("session preserved");
+    assert_eq!(session_id, "kept-session");
+}
+
+#[test]
+fn session_analysis_results_are_only_returned_for_the_current_input_digest() {
+    let (_dir, pool) = fresh_db();
+    let session = block_on(service::create_session(
+        &pool,
+        new_session("Analysis cache"),
+    ))
+    .expect("session");
+    block_on(storage::AnalysisRepo::save_result(
+        &pool,
+        &session.id,
+        "input-v1",
+        "{\"report\":1}",
+    ))
+    .expect("save result");
+
+    assert_eq!(
+        block_on(storage::AnalysisRepo::result_for_input(
+            &pool,
+            &session.id,
+            "input-v1"
+        ))
+        .expect("read result"),
+        Some("{\"report\":1}".to_string())
+    );
+    assert_eq!(
+        block_on(storage::AnalysisRepo::result_for_input(
+            &pool,
+            &session.id,
+            "input-v2"
+        ))
+        .expect("stale result is not served"),
+        None
+    );
 }
 
 #[test]

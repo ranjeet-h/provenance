@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getInvokeImpl } from "./tauri";
+import { getInvokeImpl, getListenImpl, type UnlistenFn } from "./tauri";
 import { asSessionsError } from "./sessions";
 
 export const PassageSchema = z.object({
@@ -83,13 +83,62 @@ export const ExactAnalysisSchema = z.object({
 
 export type ExactAnalysis = z.infer<typeof ExactAnalysisSchema>;
 
-export async function analyzeSession(sessionId: string): Promise<ExactAnalysis> {
+export const AnalysisProgressSchema = z.object({
+  session_id: z.string(),
+  stage: z.enum([
+    "preparing",
+    "exact",
+    "modified",
+    "aligning",
+    "scoring",
+    "saving",
+    "complete",
+    "failed",
+  ]),
+  fraction: z.number().min(0).max(1),
+  completed_pairs: z.number().int().nonnegative(),
+  total_pairs: z.number().int().nonnegative(),
+  cached_pairs: z.number().int().nonnegative(),
+});
+
+export type AnalysisProgress = z.infer<typeof AnalysisProgressSchema>;
+
+export async function analyzeSession(
+  sessionId: string,
+  onProgress?: (progress: AnalysisProgress) => void,
+): Promise<ExactAnalysis> {
+  let raw: unknown;
+  let unlisten: UnlistenFn | undefined;
+  try {
+    if (onProgress) {
+      unlisten = await getListenImpl()("analysis-progress", (event) => {
+        const parsed = AnalysisProgressSchema.safeParse(event.payload);
+        if (parsed.success && parsed.data.session_id === sessionId) {
+          onProgress(parsed.data);
+        }
+      });
+    }
+    raw = await getInvokeImpl()("analyze_session", { sessionId });
+  } catch (err) {
+    throw asSessionsError(err);
+  } finally {
+    unlisten?.();
+  }
+  const parsed = ExactAnalysisSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw { code: "protocol", message: "Unexpected response from the app core." };
+  }
+  return parsed.data;
+}
+
+export async function loadSessionAnalysis(sessionId: string): Promise<ExactAnalysis | null> {
   let raw: unknown;
   try {
-    raw = await getInvokeImpl()("analyze_session_exact", { sessionId });
+    raw = await getInvokeImpl()("get_session_analysis", { sessionId });
   } catch (err) {
     throw asSessionsError(err);
   }
+  if (raw === null) return null;
   const parsed = ExactAnalysisSchema.safeParse(raw);
   if (!parsed.success) {
     throw { code: "protocol", message: "Unexpected response from the app core." };

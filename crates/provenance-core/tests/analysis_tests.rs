@@ -128,6 +128,200 @@ fn three_way_session_flags_only_the_copied_pair() {
     }
 }
 
+#[test]
+fn analysis_progress_is_monotonic_and_raw_pair_cache_respects_input_versions() {
+    let (_dir, pool) = fresh_db();
+    let (session, student_a, _student_b, _student_c) = setup_session(&pool);
+    let initial_key = block_on(analysis::session_analysis_input_hash(&pool, &session))
+        .expect("initial input digest");
+    let first = block_on(analysis::analyze_session_exact(&pool, &session)).expect("first analysis");
+    assert_eq!(first.pairs.len(), 3);
+    let raw_count: i64 = block_on(
+        sqlx::query_scalar("SELECT COUNT(*) FROM raw_pair_analyses WHERE session_id = ?")
+            .bind(&session)
+            .fetch_one(&pool),
+    )
+    .expect("raw pair rows");
+    assert_eq!(raw_count, 3);
+
+    let saved = serde_json::to_string(&first).expect("serialize scored result");
+    block_on(storage::AnalysisRepo::save_result(
+        &pool,
+        &session,
+        &initial_key,
+        &saved,
+    ))
+    .expect("persist scored result");
+    assert!(block_on(storage::AnalysisRepo::result_for_input(
+        &pool,
+        &session,
+        &initial_key
+    ))
+    .expect("load current result")
+    .is_some());
+
+    // A scoring setting changes the full result key but not pair-level raw
+    // matching. All three raw pairs must therefore be reused and rescored.
+    block_on(service::update_session(
+        &pool,
+        &session,
+        SessionUpdate {
+            name: None,
+            subject: None,
+            assignment_prompt: Some(Some(
+                "Discuss the important causes and lasting effects of the industrial revolution in detail.".to_string(),
+            )),
+            excluded_reference_text: None,
+            exclude_common_text: None,
+        },
+    ))
+    .expect("change scoring input");
+    let filtered_key = block_on(analysis::session_analysis_input_hash(&pool, &session))
+        .expect("updated input digest");
+    assert_ne!(initial_key, filtered_key);
+    assert!(block_on(storage::AnalysisRepo::result_for_input(
+        &pool,
+        &session,
+        &filtered_key
+    ))
+    .expect("stale result not served")
+    .is_none());
+
+    let mut progress = Vec::new();
+    let filtered = block_on(analysis::analyze_session_with_progress(
+        &pool,
+        &session,
+        |update| progress.push(update),
+    ))
+    .expect("rescore with cached raw matches");
+    assert!(filtered.prompt_applied);
+    assert!(progress.windows(2).all(|w| w[0].fraction <= w[1].fraction));
+    assert!(progress
+        .iter()
+        .any(|p| p.stage == analysis::AnalysisStage::Preparing));
+    assert!(progress
+        .iter()
+        .any(|p| p.stage == analysis::AnalysisStage::Exact));
+    assert!(progress
+        .iter()
+        .any(|p| p.stage == analysis::AnalysisStage::Modified));
+    assert!(progress
+        .iter()
+        .any(|p| p.stage == analysis::AnalysisStage::Aligning));
+    assert_eq!(
+        progress.last().unwrap().stage,
+        analysis::AnalysisStage::Scoring
+    );
+    assert_eq!(progress.last().unwrap().fraction, 0.90);
+    assert!(progress
+        .iter()
+        .any(|p| p.stage == analysis::AnalysisStage::Exact && p.cached_pairs == 3));
+
+    // Changing one source creates new raw keys only for pairs containing that
+    // source; the unrelated B/C pair stays reusable.
+    block_on(service::save_text_submission(
+        &pool,
+        &student_a,
+        SourceType::PastedText,
+        None,
+        b"A changed answer now has entirely different content about photosynthesis and cellular respiration.",
+    ))
+    .expect("replace one source");
+    let mut content_progress = Vec::new();
+    let _ = block_on(analysis::analyze_session_with_progress(
+        &pool,
+        &session,
+        |update| content_progress.push(update),
+    ))
+    .expect("reanalyze changed source");
+    assert!(content_progress
+        .iter()
+        .any(|p| p.stage == analysis::AnalysisStage::Exact && p.cached_pairs == 1));
+    let raw_count: i64 = block_on(
+        sqlx::query_scalar("SELECT COUNT(*) FROM raw_pair_analyses WHERE session_id = ?")
+            .bind(&session)
+            .fetch_one(&pool),
+    )
+    .expect("raw pair rows after content change");
+    assert_eq!(raw_count, 5);
+}
+
+#[test]
+fn twenty_submissions_produce_190_unique_pairs_with_monotonic_progress() {
+    let (_dir, pool) = fresh_db();
+    let session = block_on(service::create_session(
+        &pool,
+        NewSession {
+            name: "Twenty submissions".to_string(),
+            subject: None,
+        },
+    ))
+    .expect("session")
+    .id;
+    for index in 0..20 {
+        let student = block_on(service::add_student(
+            &pool,
+            &session,
+            NewStudent {
+                display_name: format!("Student {index}"),
+            },
+        ))
+        .expect("student")
+        .id;
+        let text = format!(
+            "Distinctive response number {index} discusses topicword{index} with unique details {index} and additional individual observations."
+        );
+        block_on(service::save_text_submission(
+            &pool,
+            &student,
+            SourceType::PastedText,
+            None,
+            text.as_bytes(),
+        ))
+        .expect("submission");
+    }
+
+    let mut progress = Vec::new();
+    let report = block_on(analysis::analyze_session_with_progress(
+        &pool,
+        &session,
+        |update| progress.push(update),
+    ))
+    .expect("analysis");
+    assert_eq!(report.pairs.len(), 190);
+    let unique: std::collections::HashSet<(&str, &str)> = report
+        .pairs
+        .iter()
+        .map(|pair| (pair.a_student_id.as_str(), pair.b_student_id.as_str()))
+        .collect();
+    assert_eq!(unique.len(), 190);
+    assert!(progress.windows(2).all(|w| w[0].fraction <= w[1].fraction));
+    assert_eq!(progress.last().unwrap().total_pairs, 190);
+}
+
+#[test]
+fn corrupt_raw_pair_cache_is_rejected_without_an_automatic_recompute() {
+    let (_dir, pool) = fresh_db();
+    let (session, _, _, _) = setup_session(&pool);
+    block_on(analysis::analyze_session_exact(&pool, &session)).expect("populate raw cache");
+    block_on(
+        sqlx::query(
+            "UPDATE raw_pair_analyses SET engine_key = 'unrecognized-engine'
+             WHERE cache_key = (
+               SELECT cache_key FROM raw_pair_analyses WHERE session_id = ? LIMIT 1
+             )",
+        )
+        .bind(&session)
+        .execute(&pool),
+    )
+    .expect("corrupt cache metadata for contract test");
+
+    let result = block_on(analysis::analyze_session_exact(&pool, &session));
+    assert!(
+        matches!(result, Err(CoreError::Validation(message)) if message.contains("metadata does not match"))
+    );
+}
+
 fn cov_of(report: &ExactAnalysis, id: &str) -> f64 {
     report
         .per_student

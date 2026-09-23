@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Play } from "lucide-react";
 import { EmptyState } from "@/components/common/EmptyState";
 import { LoadingState } from "@/components/common/LoadingState";
@@ -11,7 +11,8 @@ import {
   cellCoverage,
   cellCoverageByKind,
   exclusionLabel,
-  type ExactAnalysis,
+  loadSessionAnalysis,
+  type AnalysisProgress,
   type PairAnalysis,
 } from "@/lib/analysis";
 import { asSessionsError, listSubmissions, type Student } from "@/lib/sessions";
@@ -35,10 +36,21 @@ export function AnalysisSection({
   students: Student[];
   submissionCount: number;
 }) {
-  const [report, setReport] = React.useState<ExactAnalysis | null>(null);
   const [analyzing, setAnalyzing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [selected, setSelected] = React.useState<string | null>(null);
+  const [progress, setProgress] = React.useState<AnalysisProgress | null>(null);
+  const queryClient = useQueryClient();
+  const analysisQuery = useQuery({
+    queryKey: ["analysis", sessionId],
+    queryFn: () => loadSessionAnalysis(sessionId),
+    retry: false,
+  });
+  const report = analysisQuery.data ?? null;
+  const loadingSaved = analysisQuery.isPending;
+  const displayError = error ?? (analysisQuery.isError
+    ? asSessionsError(analysisQuery.error).message
+    : null);
 
   const submissionsQuery = useQuery({
     queryKey: ["submissions", sessionId],
@@ -57,9 +69,10 @@ export function AnalysisSection({
   async function onAnalyze(): Promise<void> {
     setAnalyzing(true);
     setError(null);
+    setProgress(null);
     try {
-      const result = await analyzeSession(sessionId);
-      setReport(result);
+      const result = await analyzeSession(sessionId, setProgress);
+      queryClient.setQueryData(["analysis", sessionId], result);
       setSelected(null);
     } catch (err) {
       setError(asSessionsError(err).message);
@@ -82,7 +95,9 @@ export function AnalysisSection({
         never an accusation of who copied from whom.
       </p>
 
-      {submissionCount < 2 ? (
+      {loadingSaved ? (
+        <div className="mt-3"><LoadingState label="Loading saved analysis…" /></div>
+      ) : submissionCount < 2 ? (
         <div className="mt-3">
           <EmptyState
             title="Not enough submissions to analyze"
@@ -95,9 +110,10 @@ export function AnalysisSection({
             <Play className="h-4 w-4" aria-hidden />
             {analyzing ? "Analyzing…" : "Analyze session"}
           </Button>
-          {error ? (
-            <p role="alert" className="mt-2 text-sm text-destructive">{error}</p>
+          {displayError ? (
+            <p role="alert" className="mt-2 text-sm text-destructive">{displayError}</p>
           ) : null}
+          {analyzing && progress ? <AnalysisProgressPanel progress={progress} /> : null}
         </div>
       ) : (
         <div className="mt-3 space-y-6">
@@ -105,10 +121,11 @@ export function AnalysisSection({
             <Button variant="outline" size="sm" onClick={() => void onAnalyze()} disabled={analyzing}>
               {analyzing ? "Analyzing…" : "Re-run analysis"}
             </Button>
-            {error ? (
-              <p role="alert" className="text-sm text-destructive">{error}</p>
+            {displayError ? (
+              <p role="alert" className="text-sm text-destructive">{displayError}</p>
             ) : null}
           </div>
+          {analyzing && progress ? <AnalysisProgressPanel progress={progress} /> : null}
 
           <div>
             <h3 className="text-sm font-medium">Pairwise overlap</h3>
@@ -285,5 +302,38 @@ export function AnalysisSection({
         <LoadingState label="Loading submission texts…" />
       ) : null}
     </section>
+  );
+}
+
+const PROGRESS_LABELS: Record<AnalysisProgress["stage"], string> = {
+  preparing: "Preparing submissions",
+  exact: "Finding exact matches",
+  modified: "Finding modified matches",
+  aligning: "Aligning evidence",
+  scoring: "Scoring unique matched spans",
+  saving: "Saving analysis",
+  complete: "Analysis complete",
+  failed: "Analysis failed",
+};
+
+function AnalysisProgressPanel({ progress }: { progress: AnalysisProgress }) {
+  return (
+    <div role="status" aria-live="polite" aria-label="Analysis progress" className="mt-3 rounded-md border p-3">
+      <div className="flex justify-between gap-3 text-sm">
+        <span>{PROGRESS_LABELS[progress.stage]}</span>
+        <span className="font-mono">{Math.round(progress.fraction * 100)}%</span>
+      </div>
+      <progress
+        className="mt-2 h-2 w-full accent-primary"
+        max={1}
+        value={progress.fraction}
+        aria-label="Session analysis progress"
+      />
+      {progress.total_pairs > 0 ? (
+        <p className="mt-1 text-xs text-muted-foreground">
+          {progress.completed_pairs}/{progress.total_pairs} pairs · {progress.cached_pairs} unchanged raw pair results reused
+        </p>
+      ) : null}
+    </div>
   );
 }

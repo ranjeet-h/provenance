@@ -53,3 +53,4 @@ test and explicitly approve them.
 | Phase | Implementation evidence | Manual test / approval |
 |---|---|---|
 | 15 — Evidence merge and final coverage scoring | Exact/modified directional and per-student breakdowns; unique-span combined coverage; Rust engine and frontend contract tests | Pending user test |
+| 16 — Full session analysis engine | 20-submission/190-pair test; monotonic progress; persisted digest-validated reports; versioned raw pair cache; explicit stale-input rejection; Tauri event and frontend reload/progress tests | Pending user test |

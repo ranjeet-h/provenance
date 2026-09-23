@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use provenance_core::analysis::{self, ExactAnalysis};
+use provenance_core::analysis::{self, AnalysisProgress, AnalysisStage, ExactAnalysis};
 use provenance_core::domain::{
     NewSession, NewStudent, Session, SessionUpdate, SourceType, Student, Submission,
 };
@@ -11,7 +11,7 @@ use provenance_core::error::CoreError;
 use provenance_core::import::FileIngestResult;
 use provenance_core::{service, storage};
 use sqlx::SqlitePool;
-use tauri::{Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 struct DbState(SqlitePool);
 
@@ -162,15 +162,147 @@ async fn list_submissions(
         .map_err(CommandError::from)
 }
 
-/// Phase 5: exact-only session analysis, computed on demand.
+fn emit_analysis_progress(app: &AppHandle, progress: AnalysisProgress) -> Result<(), CommandError> {
+    app.emit("analysis-progress", progress)
+        .map_err(|_| CommandError::from(CoreError::validation("analysis progress delivery failed")))
+}
+
+/// Phase 16: run or load an input-versioned, persisted session analysis.
 #[tauri::command]
-async fn analyze_session_exact(
+async fn analyze_session(
     db: State<'_, DbState>,
+    app: AppHandle,
     session_id: String,
 ) -> Result<ExactAnalysis, CommandError> {
-    analysis::analyze_session_exact(&db.0, &session_id)
+    let input_hash = analysis::session_analysis_input_hash(&db.0, &session_id)
         .await
-        .map_err(CommandError::from)
+        .map_err(CommandError::from)?;
+    if let Some(json) = storage::AnalysisRepo::result_for_input(&db.0, &session_id, &input_hash)
+        .await
+        .map_err(CommandError::from)?
+    {
+        let report: ExactAnalysis = serde_json::from_str(&json).map_err(|_| {
+            CommandError::from(CoreError::validation(
+                "stored session analysis is corrupt and must be re-created",
+            ))
+        })?;
+        emit_analysis_progress(
+            &app,
+            AnalysisProgress {
+                session_id,
+                stage: AnalysisStage::Complete,
+                fraction: 1.0,
+                completed_pairs: report.pairs.len(),
+                total_pairs: report.pairs.len(),
+                cached_pairs: report.pairs.len(),
+            },
+        )?;
+        return Ok(report);
+    }
+
+    let progress_app = app.clone();
+    let mut progress_error = false;
+    let mut last_fraction = 0.0;
+    let result = analysis::analyze_session_with_progress(&db.0, &session_id, |progress| {
+        last_fraction = progress.fraction;
+        if progress_app.emit("analysis-progress", progress).is_err() {
+            progress_error = true;
+        }
+    })
+    .await;
+    let report = match result {
+        Ok(report) => report,
+        Err(error) => {
+            emit_analysis_progress(
+                &app,
+                AnalysisProgress {
+                    session_id: session_id.clone(),
+                    stage: AnalysisStage::Failed,
+                    fraction: last_fraction,
+                    completed_pairs: 0,
+                    total_pairs: 0,
+                    cached_pairs: 0,
+                },
+            )?;
+            return Err(CommandError::from(error));
+        }
+    };
+    if progress_error {
+        return Err(CommandError::from(CoreError::validation(
+            "analysis progress delivery failed",
+        )));
+    }
+
+    let current_hash = analysis::session_analysis_input_hash(&db.0, &session_id)
+        .await
+        .map_err(CommandError::from)?;
+    if current_hash != input_hash {
+        emit_analysis_progress(
+            &app,
+            AnalysisProgress {
+                session_id,
+                stage: AnalysisStage::Failed,
+                fraction: 0.95,
+                completed_pairs: report.pairs.len(),
+                total_pairs: report.pairs.len(),
+                cached_pairs: 0,
+            },
+        )?;
+        return Err(CommandError::from(CoreError::validation(
+            "session data changed during analysis; run the analysis again",
+        )));
+    }
+
+    emit_analysis_progress(
+        &app,
+        AnalysisProgress {
+            session_id: session_id.clone(),
+            stage: AnalysisStage::Saving,
+            fraction: 0.95,
+            completed_pairs: report.pairs.len(),
+            total_pairs: report.pairs.len(),
+            cached_pairs: 0,
+        },
+    )?;
+    let json = serde_json::to_string(&report)
+        .map_err(|_| CommandError::from(CoreError::validation("could not serialize analysis")))?;
+    storage::AnalysisRepo::save_result(&db.0, &session_id, &input_hash, &json)
+        .await
+        .map_err(CommandError::from)?;
+    emit_analysis_progress(
+        &app,
+        AnalysisProgress {
+            session_id,
+            stage: AnalysisStage::Complete,
+            fraction: 1.0,
+            completed_pairs: report.pairs.len(),
+            total_pairs: report.pairs.len(),
+            cached_pairs: 0,
+        },
+    )?;
+    Ok(report)
+}
+
+#[tauri::command]
+async fn get_session_analysis(
+    db: State<'_, DbState>,
+    session_id: String,
+) -> Result<Option<ExactAnalysis>, CommandError> {
+    let input_hash = analysis::session_analysis_input_hash(&db.0, &session_id)
+        .await
+        .map_err(CommandError::from)?;
+    let Some(json) = storage::AnalysisRepo::result_for_input(&db.0, &session_id, &input_hash)
+        .await
+        .map_err(CommandError::from)?
+    else {
+        return Ok(None);
+    };
+    let report = serde_json::from_str(&json).map_err(|_| {
+        CommandError::from(CoreError::validation(
+            "stored session analysis is corrupt and must be re-created",
+        ))
+    })?;
+    Ok(Some(report))
 }
 
 /// Upload a digital text file (TXT/Markdown/PDF/DOCX). Scanned/image-only
@@ -227,7 +359,8 @@ pub fn run() {
             get_submission,
             list_submissions,
             save_file_submission,
-            analyze_session_exact,
+            analyze_session,
+            get_session_analysis,
             inspect_text
         ])
         .run(tauri::generate_context!())

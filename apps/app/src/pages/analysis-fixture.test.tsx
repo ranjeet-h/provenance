@@ -103,7 +103,7 @@ describe("recorded engine fixture contract", () => {
     // Guards fake/real shape drift: whatever the fake returns must satisfy
     // the real command contract.
     const { invoke } = createFakeSessions(seedRecorded());
-    const raw = await invoke("analyze_session_exact", { sessionId: "sess-sample" });
+    const raw = await invoke("analyze_session", { sessionId: "sess-sample" });
     expect(ExactAnalysisSchema.safeParse(raw).success).toBe(true);
   });
 });
@@ -113,7 +113,7 @@ describe("recorded fixture renders real evidence", () => {
     const user = userEvent.setup();
     const { invoke: fake } = createFakeSessions(seedRecorded());
     setInvokeImpl((cmd, args) => {
-      if (cmd === "analyze_session_exact") {
+      if (cmd === "analyze_session") {
         return Promise.resolve(fixtureJson);
       }
       return fake(cmd, args);
@@ -121,7 +121,7 @@ describe("recorded fixture renders real evidence", () => {
     renderRouteAt("/sessions/sess-sample");
     await screen.findByRole("heading", { name: /sample session/i });
 
-    await user.click(screen.getByRole("button", { name: /analyze session/i }));
+    await user.click(await screen.findByRole("button", { name: /analyze session/i }));
     // Amit ↔ Sara carries the recorded modified paraphrase passage.
     await user.click(
       await screen.findByRole("button", { name: /amit vs sara: \d+% overlap/i }),

@@ -114,7 +114,7 @@ describe("excluded evidence display", () => {  it("flags the answer while listin
     renderRouteAt("/sessions/sess-6");
     await screen.findByRole("heading", { name: /filtered session/i });
 
-    await user.click(screen.getByRole("button", { name: /analyze session/i }));
+    await user.click(await screen.findByRole("button", { name: /analyze session/i }));
     await user.click(await screen.findByRole("button", { name: /amit vs priya: \d+% overlap/i }));
 
     const detail = await screen.findByLabelText(/pair detail/i);
@@ -150,7 +150,7 @@ describe("insufficient assessable text", () => {
     renderRouteAt("/sessions/sess-7");
     await screen.findByRole("heading", { name: /prompt only/i });
 
-    await user.click(screen.getByRole("button", { name: /analyze session/i }));
+    await user.click(await screen.findByRole("button", { name: /analyze session/i }));
     await screen.findByRole("button", { name: /amit vs priya: not assessable/i });
     expect(await screen.findAllByText(/not assessable · insufficient assessable text/i)).not.toHaveLength(0);
     expect(screen.queryByText(/0% · 0\/0 eligible words/i)).not.toBeInTheDocument();

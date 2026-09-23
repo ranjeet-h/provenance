@@ -13,7 +13,7 @@ use crate::domain::{
 use crate::error::CoreError;
 
 /// Current schema version. Bump with a new `MIGRATION_Vn` block.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 const MIGRATION_V1: &str = "
 CREATE TABLE IF NOT EXISTS sessions (
@@ -57,6 +57,28 @@ const MIGRATION_V3: &str = "
 ALTER TABLE sessions ADD COLUMN assignment_prompt TEXT NULL;
 ALTER TABLE sessions ADD COLUMN excluded_reference_text TEXT NULL;
 ALTER TABLE sessions ADD COLUMN exclude_common_text INTEGER NOT NULL DEFAULT 1;
+";
+
+/// Phase 16: version-keyed raw pair evidence and a separately scored session result.
+const MIGRATION_V4: &str = "
+CREATE TABLE analysis_results (
+  session_id TEXT PRIMARY KEY REFERENCES sessions (id) ON DELETE CASCADE,
+  input_sha256 TEXT NOT NULL,
+  report_json TEXT NOT NULL,
+  completed_at TEXT NOT NULL
+);
+CREATE TABLE raw_pair_analyses (
+  cache_key TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+  student_a_id TEXT NOT NULL,
+  student_b_id TEXT NOT NULL,
+  source_hash_a TEXT NOT NULL,
+  source_hash_b TEXT NOT NULL,
+  engine_key TEXT NOT NULL,
+  evidence_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_raw_pair_analyses_session ON raw_pair_analyses (session_id);
 ";
 
 async fn apply_migration(
@@ -116,6 +138,10 @@ pub async fn migrate(pool: &SqlitePool) -> Result<(), CoreError> {
     if current < 3 {
         // Phase 6: assignment prompt/reference settings + DF toggle.
         apply_migration(&mut tx, MIGRATION_V3, 3).await?;
+    }
+    if current < 4 {
+        // Phase 16: persist raw matching evidence separately from scored reports.
+        apply_migration(&mut tx, MIGRATION_V4, 4).await?;
     }
     tx.commit().await.map_err(CoreError::Database)?;
     Ok(())
@@ -455,6 +481,127 @@ impl SubmissionRepo {
             .await
             .map_err(CoreError::Database)?;
         rows.iter().map(map_row_to_submission).collect()
+    }
+}
+
+/// Storage for versioned raw pair evidence and current, session-scored output.
+/// Results are returned only for an exact input digest match; stale rows are
+/// never presented as current.
+pub struct AnalysisRepo;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawPairEvidenceRecord {
+    pub session_id: String,
+    pub student_a_id: String,
+    pub student_b_id: String,
+    pub source_hash_a: String,
+    pub source_hash_b: String,
+    pub engine_key: String,
+    pub evidence_json: String,
+}
+
+impl AnalysisRepo {
+    pub async fn result_for_input(
+        pool: &SqlitePool,
+        session_id: &str,
+        input_sha256: &str,
+    ) -> Result<Option<String>, CoreError> {
+        sqlx::query_scalar(
+            "SELECT report_json FROM analysis_results
+             WHERE session_id = ? AND input_sha256 = ?",
+        )
+        .bind(session_id)
+        .bind(input_sha256)
+        .fetch_optional(pool)
+        .await
+        .map_err(CoreError::Database)
+    }
+
+    pub async fn save_result(
+        pool: &SqlitePool,
+        session_id: &str,
+        input_sha256: &str,
+        report_json: &str,
+    ) -> Result<(), CoreError> {
+        sqlx::query(
+            "INSERT INTO analysis_results (session_id, input_sha256, report_json, completed_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT (session_id) DO UPDATE SET
+               input_sha256 = excluded.input_sha256,
+               report_json = excluded.report_json,
+               completed_at = excluded.completed_at",
+        )
+        .bind(session_id)
+        .bind(input_sha256)
+        .bind(report_json)
+        .bind(now_iso())
+        .execute(pool)
+        .await
+        .map_err(CoreError::Database)?;
+        Ok(())
+    }
+
+    pub async fn raw_pair_evidence(
+        pool: &SqlitePool,
+        cache_key: &str,
+    ) -> Result<Option<RawPairEvidenceRecord>, CoreError> {
+        let row = sqlx::query(
+            "SELECT session_id, student_a_id, student_b_id, source_hash_a,
+                    source_hash_b, engine_key, evidence_json
+             FROM raw_pair_analyses WHERE cache_key = ?",
+        )
+        .bind(cache_key)
+        .fetch_optional(pool)
+        .await
+        .map_err(CoreError::Database)?;
+        row.map(|row| {
+            Ok(RawPairEvidenceRecord {
+                session_id: row.try_get("session_id").map_err(CoreError::Database)?,
+                student_a_id: row.try_get("student_a_id").map_err(CoreError::Database)?,
+                student_b_id: row.try_get("student_b_id").map_err(CoreError::Database)?,
+                source_hash_a: row.try_get("source_hash_a").map_err(CoreError::Database)?,
+                source_hash_b: row.try_get("source_hash_b").map_err(CoreError::Database)?,
+                engine_key: row.try_get("engine_key").map_err(CoreError::Database)?,
+                evidence_json: row.try_get("evidence_json").map_err(CoreError::Database)?,
+            })
+        })
+        .transpose()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn save_raw_pair_evidence(
+        pool: &SqlitePool,
+        cache_key: &str,
+        session_id: &str,
+        student_a_id: &str,
+        student_b_id: &str,
+        source_hash_a: &str,
+        source_hash_b: &str,
+        engine_key: &str,
+        evidence_json: &str,
+    ) -> Result<(), CoreError> {
+        sqlx::query(
+            "INSERT INTO raw_pair_analyses
+               (cache_key, session_id, student_a_id, student_b_id,
+                source_hash_a, source_hash_b, engine_key, evidence_json, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (cache_key) DO UPDATE SET
+               evidence_json = excluded.evidence_json,
+               updated_at = excluded.updated_at",
+        )
+        .bind(cache_key)
+        .bind(session_id)
+        .bind(student_a_id)
+        .bind(student_b_id)
+        .bind(source_hash_a)
+        .bind(source_hash_b)
+        .bind(engine_key)
+        .bind(evidence_json)
+        .bind(now_iso())
+        .execute(pool)
+        .await
+        .map_err(CoreError::Database)?;
+        Ok(())
     }
 }
 
