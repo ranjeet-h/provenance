@@ -3,8 +3,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use printpdf::{
-    Base64OrRaw, Color, GeneratePdfOptions, Op, PaintMode, PdfDocument, PdfParseOptions,
-    PdfSaveOptions,
+    Base64OrRaw, BuiltinFont, Color, GeneratePdfOptions, Mm, Op, PaintMode, PdfDocument,
+    PdfFontHandle, PdfPage, PdfParseOptions, PdfSaveOptions, Point, Pt, RawImage, RawImageData,
+    RawImageFormat, TextItem, XObjectTransform,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -824,7 +825,47 @@ pub fn report_html(report: &StudentReport) -> Result<String, ReportError> {
 
 pub fn render_report_pdf(report: &StudentReport) -> Result<Vec<u8>, ReportError> {
     let html = report_html(report)?;
-    validate_font_coverage(&html)?;
+    let document = render_report_pdf_document(&html)?;
+    save_report_pdf(document, report)
+}
+
+pub fn render_certified_report_pdf(
+    certified: &crate::signature::CertifiedStudentReport,
+) -> Result<Vec<u8>, ReportError> {
+    crate::signature::verify_certified_student_report(certified).map_err(|error| {
+        ReportError::Invalid(format!("certificate verification failed: {error}"))
+    })?;
+    let report = &certified.report;
+    let base_html = report_html(report)?;
+    let footer_start = base_html
+        .find("<p class=\"disclaimer\">")
+        .ok_or_else(|| ReportError::Invalid("required reviewer footer is missing".into()))?;
+    let certificate_section = format!(
+        "<h2>Certification</h2><p><strong>Teacher-certified session</strong> · Ed25519</p><p>Session lock SHA-256: {}</p><p>Signer key ID: {}</p><p>Report signature: {}</p><p>Locked at: {}</p><p>Certified at: {}</p><p class=\"muted\">The following page contains a scannable verification code. The companion signed JSON is required to verify the complete report offline.</p>",
+        escape_html(&certified.lock_sha256),
+        escape_html(&certified.signature.key_id),
+        escape_html(&certified.signature.signature_hex),
+        escape_html(&certified.locked_at),
+        escape_html(&certified.certified_at),
+    );
+    let mut html = String::with_capacity(base_html.len() + certificate_section.len());
+    html.push_str(&base_html[..footer_start]);
+    html.push_str(&certificate_section);
+    html.push_str("</body></html>");
+    let mut document = render_report_pdf_document(&html)?;
+    let payload = crate::signature::verification_qr_payload(certified);
+    let symbol =
+        qrcode_generator::qr::Encoder::new(qrcode_generator::qr::ErrorCorrection::Quartile)
+            .encode_text(&payload)
+            .map_err(|error| {
+                ReportError::Pdf(format!("verification QR generation failed: {error}"))
+            })?;
+    append_verification_qr_page(&mut document, &symbol)?;
+    save_report_pdf(document, report)
+}
+
+fn render_report_pdf_document(html: &str) -> Result<PdfDocument, ReportError> {
+    validate_font_coverage(html)?;
     let images = BTreeMap::new();
     let mut fonts = BTreeMap::new();
     fonts.insert(
@@ -841,7 +882,7 @@ pub fn render_report_pdf(report: &StudentReport) -> Result<Vec<u8>, ReportError>
         ..Default::default()
     };
     let mut warnings = Vec::new();
-    let document = PdfDocument::from_html(&html, &images, &fonts, &options, &mut warnings)
+    let document = PdfDocument::from_html(html, &images, &fonts, &options, &mut warnings)
         .map_err(ReportError::Pdf)?;
     if !warnings.is_empty() {
         return Err(ReportError::Pdf(format!(
@@ -851,6 +892,119 @@ pub fn render_report_pdf(report: &StudentReport) -> Result<Vec<u8>, ReportError>
     if document.pages.is_empty() {
         return Err(ReportError::Pdf("renderer produced no pages".into()));
     }
+    Ok(document)
+}
+
+fn append_verification_qr_page(
+    document: &mut PdfDocument,
+    symbol: &qrcode_generator::Symbol,
+) -> Result<(), ReportError> {
+    let side = 420usize;
+    let pixels = qrcode_generator::Renderer::new(symbol, side)
+        .to_luma8()
+        .map_err(|error| ReportError::Pdf(format!("verification QR rendering failed: {error}")))?;
+    if pixels.len() != side * side {
+        return Err(ReportError::Pdf(
+            "verification QR renderer returned an invalid image size".into(),
+        ));
+    }
+    let qr = RawImage {
+        pixels: RawImageData::U8(pixels),
+        width: side,
+        height: side,
+        data_format: RawImageFormat::R8,
+        tag: Vec::new(),
+    };
+    let image_id = document.add_image(&qr);
+    let image_size_mm = 50.0f32;
+    let image_size_pt = image_size_mm * 72.0 / 25.4;
+    let natural_size_pt = side as f32 * 72.0 / 300.0;
+    let scale = image_size_pt / natural_size_pt;
+    let image_x_pt = (210.0 - image_size_mm) * 72.0 / (2.0 * 25.4);
+    let image_y_pt = 145.0 * 72.0 / 25.4;
+    let mut ops = vec![
+        Op::StartTextSection,
+        Op::SetFont {
+            font: PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+            size: Pt(20.0),
+        },
+        Op::SetTextCursor {
+            pos: Point::new(Mm(20.0), Mm(270.0)),
+        },
+        Op::ShowText {
+            items: vec![TextItem::Text("Offline certificate verification".into())],
+        },
+        Op::SetFont {
+            font: PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+            size: Pt(10.0),
+        },
+        Op::SetTextCursor {
+            pos: Point::new(Mm(20.0), Mm(255.0)),
+        },
+        Op::ShowText {
+            items: vec![TextItem::Text(
+                "Scan to read the lock digest, report digest, key ID, and signature.".into(),
+            )],
+        },
+        Op::SetTextCursor {
+            pos: Point::new(Mm(20.0), Mm(248.0)),
+        },
+        Op::ShowText {
+            items: vec![TextItem::Text(
+                "Use the companion signed JSON to verify the complete report offline.".into(),
+            )],
+        },
+        Op::EndTextSection,
+        Op::UseXobject {
+            id: image_id,
+            transform: XObjectTransform {
+                translate_x: Some(Pt(image_x_pt)),
+                translate_y: Some(Pt(image_y_pt)),
+                scale_x: Some(scale),
+                scale_y: Some(scale),
+                dpi: Some(300.0),
+                ..Default::default()
+            },
+        },
+    ];
+    let footer_lines = wrap_report_footer(REVIEWER_DISCLAIMER, 105);
+    ops.push(Op::StartTextSection);
+    ops.push(Op::SetFont {
+        font: PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+        size: Pt(8.0),
+    });
+    for (index, line) in footer_lines.iter().enumerate() {
+        ops.push(Op::SetTextCursor {
+            pos: Point::new(Mm(18.0), Mm(42.0 - index as f32 * 4.0)),
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(line.clone())],
+        });
+    }
+    ops.push(Op::EndTextSection);
+    document.pages.push(PdfPage::new(Mm(210.0), Mm(297.0), ops));
+    Ok(())
+}
+
+fn wrap_report_footer(text: &str, max_chars: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if !current.is_empty() && current.len() + 1 + word.len() > max_chars {
+            lines.push(std::mem::take(&mut current));
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+fn save_report_pdf(document: PdfDocument, report: &StudentReport) -> Result<Vec<u8>, ReportError> {
     let mut save_warnings = Vec::new();
     let bytes = document.save(&PdfSaveOptions::default(), &mut save_warnings);
     if !save_warnings.is_empty() {

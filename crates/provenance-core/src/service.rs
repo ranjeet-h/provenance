@@ -3,25 +3,100 @@
 
 use std::collections::{HashMap, HashSet};
 
+use ed25519_dalek::SigningKey;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
 use crate::analysis;
 use crate::domain::{
-    now_iso, NewSession, NewStudent, ReferenceLibrary, ReferenceSubmission, Session, SessionStatus,
-    SessionUpdate, SourceType, Student, Submission,
+    now_iso, NewSession, NewStudent, ReferenceLibrary, ReferenceSubmission, Session,
+    SessionLockSummary, SessionStatus, SessionUpdate, SourceType, Student, Submission,
 };
 use crate::error::CoreError;
 use crate::import::{extract_file, FileIngestResult};
 use crate::ingest::{clean_filename, validate_submission_bytes};
 use crate::storage::{
-    AnalysisRepo, ReferenceLibraryRepo, SessionPatch, SessionRepo, StudentRepo, SubmissionRepo,
+    AnalysisRepo, ReferenceLibraryRepo, SessionLockRecord, SessionLockRepo, SessionPatch,
+    SessionRepo, StudentRepo, SubmissionRepo,
 };
 use provenance_report::report::{
     build_report, ComparedLibrary as ReportLibrary, ComparedSubmission, EngineVersions,
     MatchKind as ReportMatchKind, ReportEvidence, ReportExclusionInput, ReportInput, ReportMode,
     ReportSource, SourceCorpus, StudentReport,
 };
+use provenance_report::signature::{
+    certify_student_report as certify_report, sign_bytes, signing_key_id, verify_bytes,
+    CertifiedStudentReport, SignatureProof,
+};
+
+const SESSION_LOCK_CONTEXT: &[u8] = b"provenance/session-lock/v1\0";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SessionLockManifest {
+    schema_version: u32,
+    session_id: String,
+    session_name: String,
+    subject: Option<String>,
+    assignment_prompt: Option<String>,
+    excluded_reference_text: Option<String>,
+    exclude_common_text: bool,
+    analysis_input_sha256: String,
+    saved_analysis_sha256: String,
+    engine: LockedEngine,
+    students: Vec<LockedStudent>,
+    submissions: Vec<LockedSubmission>,
+    reference_libraries: Vec<LockedLibrary>,
+    locked_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LockedEngine {
+    fingerprint: u32,
+    normalization: u32,
+    common_text: u32,
+    modified: u32,
+    session_scoring: u32,
+    exact_config: String,
+    modified_config: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LockedStudent {
+    id: String,
+    display_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LockedSubmission {
+    id: String,
+    student_id: String,
+    source_type: SourceType,
+    source_filename: Option<String>,
+    content_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LockedLibrary {
+    id: String,
+    name: String,
+    source_session_id: String,
+    source_session_name: String,
+    created_at: String,
+    fingerprint_version: u32,
+    normalization_version: u32,
+    modified_version: u32,
+    submissions: Vec<LockedReferenceSubmission>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LockedReferenceSubmission {
+    id: String,
+    source_label: String,
+    source_filename: Option<String>,
+    source_type: SourceType,
+    content_sha256: String,
+}
 
 fn require_draft(status: SessionStatus, action: &str) -> Result<(), CoreError> {
     if status != SessionStatus::Draft {
@@ -237,6 +312,12 @@ pub async fn set_session_reference_libraries(
 }
 
 pub async fn delete_reference_library(pool: &SqlitePool, id: &str) -> Result<(), CoreError> {
+    if let Some(session_id) = SessionLockRepo::selected_by_locked_session(pool, id).await? {
+        return Err(CoreError::LockedMutation {
+            status: "locked".into(),
+            action: format!("deleting a reference library selected by session {session_id}"),
+        });
+    }
     ReferenceLibraryRepo::delete(pool, id).await
 }
 
@@ -437,6 +518,14 @@ pub async fn build_student_report(
             source_count: library.source_count,
         })
         .collect::<Vec<_>>();
+    if report_mode == ReportMode::SelfCheck
+        && current_comparisons.is_empty()
+        && historical_libraries.is_empty()
+    {
+        return Err(CoreError::validation(
+            "self-check requires at least one other current submission or a non-empty selected reference library",
+        ));
+    }
     let mut matches = Vec::new();
     let mut exclusions = Vec::new();
     let mut exclusion_keys = HashSet::new();
@@ -640,6 +729,291 @@ pub async fn build_student_report(
         },
     })
     .map_err(|error| CoreError::validation(error.to_string()))
+}
+
+/// Freeze the complete current report/analysis corpus and persist its signed
+/// manifest atomically with the session's `locked` state.
+pub async fn lock_session(
+    pool: &SqlitePool,
+    session_id: &str,
+    signing_key: &SigningKey,
+) -> Result<SessionLockSummary, CoreError> {
+    validate_session_can_lock(pool, session_id).await?;
+    let locked_at = now_iso();
+    let manifest = build_session_lock_manifest(pool, session_id, &locked_at).await?;
+    let manifest_json = serde_json::to_string(&manifest)
+        .map_err(|_| CoreError::validation("could not serialize session lock manifest"))?;
+    let manifest_sha256 = sha256_hex(manifest_json.as_bytes());
+    let proof = sign_bytes(SESSION_LOCK_CONTEXT, manifest_json.as_bytes(), signing_key);
+    let signature_json = serde_json::to_string(&proof)
+        .map_err(|_| CoreError::validation("could not serialize session lock signature"))?;
+    SessionLockRepo::insert_and_lock(
+        pool,
+        &SessionLockRecord {
+            session_id: session_id.to_string(),
+            manifest_json,
+            manifest_sha256: manifest_sha256.clone(),
+            signature_json,
+            locked_at: locked_at.clone(),
+        },
+    )
+    .await?;
+    Ok(SessionLockSummary {
+        session_id: session_id.to_string(),
+        locked_at,
+        manifest_sha256,
+        signing_key_id: proof.key_id,
+    })
+}
+
+/// Validate fresh analysis and all input hashes before the app touches the OS
+/// keychain for a new signing key.
+pub async fn validate_session_can_lock(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> Result<(), CoreError> {
+    let session = SessionRepo::get(pool, session_id).await?;
+    if session.status == SessionStatus::Locked {
+        return Err(CoreError::LockedMutation {
+            status: "locked".into(),
+            action: "locking again or replacing the existing certificate".into(),
+        });
+    }
+    if SessionLockRepo::get(pool, session_id).await?.is_some() {
+        return Err(CoreError::validation(
+            "a session lock record already exists; it cannot be replaced or unlocked",
+        ));
+    }
+    build_session_lock_manifest(pool, session_id, &now_iso()).await?;
+    Ok(())
+}
+
+/// Verify the stored lock's digest, Ed25519 proof, frozen metadata and live
+/// database inputs. Any discrepancy is an error, never an unlocked status.
+pub async fn get_session_lock(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> Result<Option<SessionLockSummary>, CoreError> {
+    let session = SessionRepo::get(pool, session_id).await?;
+    let Some(record) = SessionLockRepo::get(pool, session_id).await? else {
+        if session.status == SessionStatus::Locked {
+            return Err(CoreError::validation(
+                "session is marked locked but its signed lock record is missing",
+            ));
+        }
+        return Ok(None);
+    };
+    if session.status != SessionStatus::Locked {
+        return Err(CoreError::validation(
+            "signed lock record exists but the session status is not locked",
+        ));
+    }
+    validate_lock_record(pool, session_id, &record).await?;
+    let proof: SignatureProof = serde_json::from_str(&record.signature_json)
+        .map_err(|_| CoreError::validation("stored session lock signature is corrupt"))?;
+    Ok(Some(SessionLockSummary {
+        session_id: record.session_id,
+        locked_at: record.locked_at,
+        manifest_sha256: record.manifest_sha256,
+        signing_key_id: proof.key_id,
+    }))
+}
+
+/// Build and sign a teacher report only if it is covered by the verified
+/// immutable session lock and the same OS-backed local signing key.
+pub async fn certify_student_report(
+    pool: &SqlitePool,
+    session_id: &str,
+    student_id: &str,
+    anonymize: bool,
+    signing_key: &SigningKey,
+) -> Result<CertifiedStudentReport, CoreError> {
+    let lock = get_session_lock(pool, session_id)
+        .await?
+        .ok_or_else(|| CoreError::validation("lock the session before certifying reports"))?;
+    if signing_key_id(signing_key) != lock.signing_key_id {
+        return Err(CoreError::validation(
+            "the local signing key does not match this session's lock; this report cannot be certified",
+        ));
+    }
+    let report =
+        build_student_report(pool, session_id, student_id, anonymize, ReportMode::Teacher).await?;
+    certify_report(
+        report,
+        &lock.manifest_sha256,
+        &lock.locked_at,
+        &now_iso(),
+        signing_key,
+    )
+    .map_err(|error| CoreError::validation(error.to_string()))
+}
+
+async fn validate_lock_record(
+    pool: &SqlitePool,
+    session_id: &str,
+    record: &SessionLockRecord,
+) -> Result<SessionLockManifest, CoreError> {
+    if record.session_id != session_id
+        || sha256_hex(record.manifest_json.as_bytes()) != record.manifest_sha256
+    {
+        return Err(CoreError::validation(
+            "session lock manifest SHA-256 verification failed",
+        ));
+    }
+    let proof: SignatureProof = serde_json::from_str(&record.signature_json)
+        .map_err(|_| CoreError::validation("stored session lock signature is corrupt"))?;
+    verify_bytes(
+        SESSION_LOCK_CONTEXT,
+        record.manifest_json.as_bytes(),
+        &proof,
+    )
+    .map_err(|error| {
+        CoreError::validation(format!(
+            "session lock signature verification failed: {error}"
+        ))
+    })?;
+    let stored: SessionLockManifest = serde_json::from_str(&record.manifest_json)
+        .map_err(|_| CoreError::validation("stored session lock manifest is corrupt"))?;
+    if stored.session_id != session_id || stored.locked_at != record.locked_at {
+        return Err(CoreError::validation(
+            "session lock metadata does not match its signed manifest",
+        ));
+    }
+    let current = build_session_lock_manifest(pool, session_id, &record.locked_at).await?;
+    let current_json = serde_json::to_string(&current)
+        .map_err(|_| CoreError::validation("could not serialize current session lock inputs"))?;
+    if current != stored || current_json != record.manifest_json {
+        return Err(CoreError::validation(
+            "session inputs or comparison corpus changed after locking; the certificate is invalid",
+        ));
+    }
+    Ok(stored)
+}
+
+async fn build_session_lock_manifest(
+    pool: &SqlitePool,
+    session_id: &str,
+    locked_at: &str,
+) -> Result<SessionLockManifest, CoreError> {
+    let session = SessionRepo::get(pool, session_id).await?;
+    let input_hash = analysis::session_analysis_input_hash(pool, session_id).await?;
+    let analysis_json = AnalysisRepo::result_for_input(pool, session_id, &input_hash)
+        .await?
+        .ok_or_else(|| {
+            CoreError::validation(
+                "run analysis for the exact current session inputs before locking",
+            )
+        })?;
+    let analyzed: analysis::ExactAnalysis = serde_json::from_str(&analysis_json).map_err(|_| {
+        CoreError::validation("saved analysis is corrupt; re-run it before locking")
+    })?;
+    if analyzed.fingerprint_version != provenance_match::FINGERPRINT_VERSION
+        || analyzed.normalization_version != provenance_match::NORMALIZATION_VERSION
+        || analyzed.common_text_version != provenance_match::COMMON_TEXT_VERSION
+        || analyzed.modified_version != provenance_match::MODIFIED_VERSION
+    {
+        return Err(CoreError::validation(
+            "saved analysis engine versions do not match the current engine; re-run analysis before locking",
+        ));
+    }
+
+    let mut students = StudentRepo::list_by_session(pool, session_id).await?;
+    students.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut submissions = SubmissionRepo::list_by_session(pool, session_id).await?;
+    submissions.sort_by(|left, right| left.student_id.cmp(&right.student_id));
+    let mut locked_submissions = Vec::with_capacity(submissions.len());
+    let mut current_nonempty = 0usize;
+    for submission in submissions {
+        let actual_hash = sha256_hex(submission.original_text.as_bytes());
+        if actual_hash != submission.content_sha256 {
+            return Err(CoreError::validation(format!(
+                "submission {} content hash does not match; re-import it before locking",
+                submission.id
+            )));
+        }
+        current_nonempty += usize::from(!submission.original_text.trim().is_empty());
+        locked_submissions.push(LockedSubmission {
+            id: submission.id,
+            student_id: submission.student_id,
+            source_type: submission.source_type,
+            source_filename: submission.source_filename,
+            content_sha256: actual_hash,
+        });
+    }
+
+    let selected_ids = ReferenceLibraryRepo::selected_ids(pool, session_id).await?;
+    let mut reference_libraries = Vec::with_capacity(selected_ids.len());
+    let mut historical_nonempty = 0usize;
+    for library_id in selected_ids {
+        let library = ReferenceLibraryRepo::get(pool, &library_id).await?;
+        let mut references = ReferenceLibraryRepo::submissions(pool, &library_id).await?;
+        references.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut locked_references = Vec::with_capacity(references.len());
+        for reference in references {
+            let actual_hash = sha256_hex(reference.original_text.as_bytes());
+            if actual_hash != reference.content_sha256 {
+                return Err(CoreError::validation(format!(
+                    "reference submission {} content hash does not match; repair the library before locking",
+                    reference.id
+                )));
+            }
+            historical_nonempty += usize::from(!reference.original_text.trim().is_empty());
+            locked_references.push(LockedReferenceSubmission {
+                id: reference.id,
+                source_label: reference.source_label,
+                source_filename: reference.source_filename,
+                source_type: reference.source_type,
+                content_sha256: actual_hash,
+            });
+        }
+        reference_libraries.push(LockedLibrary {
+            id: library.id,
+            name: library.name,
+            source_session_id: library.source_session_id,
+            source_session_name: library.source_session_name,
+            created_at: library.created_at,
+            fingerprint_version: library.fingerprint_version,
+            normalization_version: library.normalization_version,
+            modified_version: library.modified_version,
+            submissions: locked_references,
+        });
+    }
+    if current_nonempty < 2 && (current_nonempty == 0 || historical_nonempty == 0) {
+        return Err(CoreError::validation(
+            "lock requires at least two current submissions, or one current submission and a non-empty selected reference library",
+        ));
+    }
+    reference_libraries.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(SessionLockManifest {
+        schema_version: 1,
+        session_id: session.id,
+        session_name: session.name,
+        subject: session.subject,
+        assignment_prompt: session.assignment_prompt,
+        excluded_reference_text: session.excluded_reference_text,
+        exclude_common_text: session.exclude_common_text,
+        analysis_input_sha256: input_hash,
+        saved_analysis_sha256: sha256_hex(analysis_json.as_bytes()),
+        engine: LockedEngine {
+            fingerprint: provenance_match::FINGERPRINT_VERSION,
+            normalization: provenance_match::NORMALIZATION_VERSION,
+            common_text: provenance_match::COMMON_TEXT_VERSION,
+            modified: provenance_match::MODIFIED_VERSION,
+            session_scoring: analysis::SESSION_SCORING_VERSION,
+            exact_config: format!("{:?}", provenance_match::ExactConfig::default()),
+            modified_config: format!("{:?}", provenance_match::ModifiedConfig::default()),
+        },
+        students: students
+            .into_iter()
+            .map(|student| LockedStudent {
+                id: student.id,
+                display_name: student.display_name,
+            })
+            .collect(),
+        submissions: locked_submissions,
+        reference_libraries,
+        locked_at: locked_at.to_string(),
+    })
 }
 
 fn source_label(student: &Student, filename: Option<&str>) -> String {

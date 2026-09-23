@@ -29,3 +29,7 @@ sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
 provenance-core = { path = "../../../crates/provenance-core" }
 provenance-match = { path = "../../../crates/provenance-match" }
 provenance-report = { path = "../../../crates/provenance-report" }
+ed25519-dalek = "3.0.0"
+getrandom = "0.4.3"
+keyring = "4.2.0"
+zeroize = "1.9.0"

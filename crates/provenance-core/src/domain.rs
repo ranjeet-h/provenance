@@ -141,6 +141,16 @@ pub struct Session {
     pub updated_at: String,
 }
 
+/// Public lock metadata returned to the UI; private signing material is never
+/// included in a session or lock response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionLockSummary {
+    pub session_id: String,
+    pub locked_at: String,
+    pub manifest_sha256: String,
+    pub signing_key_id: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NewSession {
     pub name: String,

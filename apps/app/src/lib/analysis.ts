@@ -173,7 +173,7 @@ export async function loadSessionAnalysis(sessionId: string): Promise<ExactAnaly
   return parsed.data;
 }
 
-export type StudentReportMode = "teacher" | "self_check";
+export type StudentReportMode = "self_check";
 
 /** Request a locally rendered Tauri PDF. Malformed bytes are a protocol error, never a success. */
 export async function generateStudentReportPdf(
@@ -196,6 +196,84 @@ export async function generateStudentReportPdf(
   const parsed = z.array(z.number().int().min(0).max(255)).safeParse(raw);
   if (!parsed.success || parsed.data.length < 5 || parsed.data[0] !== 37 || parsed.data[1] !== 80 || parsed.data[2] !== 68 || parsed.data[3] !== 70 || parsed.data[4] !== 45) {
     throw { code: "protocol", message: "The app core did not return a valid PDF report." };
+  }
+  return parsed.data;
+}
+
+const PdfBytesSchema = z.array(z.number().int().min(0).max(255));
+const CertifiedStudentReportShapeSchema = z.object({
+  schema_version: z.literal(1),
+  lock_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  report: z.object({ payload: z.object({ report_mode: z.literal("teacher") }) }),
+  signature: z.object({
+    algorithm: z.literal("Ed25519"),
+    key_id: z.string().regex(/^[a-f0-9]{64}$/),
+    public_key_hex: z.string().regex(/^[a-f0-9]{64}$/),
+    signature_hex: z.string().regex(/^[a-f0-9]{128}$/),
+  }),
+});
+
+export interface CertifiedReportExport {
+  pdfBytes: number[];
+  signedReportJson: string;
+}
+
+export async function generateCertifiedStudentReport(
+  sessionId: string,
+  studentId: string,
+  anonymize: boolean,
+): Promise<CertifiedReportExport> {
+  let raw: unknown;
+  try {
+    raw = await getInvokeImpl()("generate_certified_student_report", {
+      sessionId,
+      studentId,
+      anonymize,
+    });
+  } catch (err) {
+    throw asSessionsError(err);
+  }
+  const result = z.object({
+    pdf_bytes: PdfBytesSchema,
+    signed_report_json: z.string().min(1),
+  }).safeParse(raw);
+  if (!result.success) {
+    throw { code: "protocol", message: "The app core did not return a complete signed report." };
+  }
+  const pdf = result.data.pdf_bytes;
+  if (pdf.length < 5 || pdf[0] !== 37 || pdf[1] !== 80 || pdf[2] !== 68 || pdf[3] !== 70 || pdf[4] !== 45) {
+    throw { code: "protocol", message: "The app core did not return a valid certified PDF." };
+  }
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(result.data.signed_report_json);
+  } catch {
+    throw { code: "protocol", message: "The app core returned invalid signed report JSON." };
+  }
+  if (!CertifiedStudentReportShapeSchema.safeParse(envelope).success) {
+    throw { code: "protocol", message: "The app core returned an incomplete signed report certificate." };
+  }
+  return { pdfBytes: pdf, signedReportJson: result.data.signed_report_json };
+}
+
+const SignatureVerificationSchema = z.object({
+  status: z.literal("verified"),
+  signing_key_id: z.string().regex(/^[a-f0-9]{64}$/),
+  note: z.string().min(1),
+});
+
+export type SignatureVerification = z.infer<typeof SignatureVerificationSchema>;
+
+export async function verifyCertifiedStudentReport(reportJson: string): Promise<SignatureVerification> {
+  let raw: unknown;
+  try {
+    raw = await getInvokeImpl()("verify_certified_student_report", { reportJson });
+  } catch (err) {
+    throw asSessionsError(err);
+  }
+  const parsed = SignatureVerificationSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw { code: "protocol", message: "Unexpected response from report verification." };
   }
   return parsed.data;
 }

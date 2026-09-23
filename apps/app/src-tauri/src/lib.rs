@@ -2,20 +2,89 @@
 // Business behavior lives in the core crates; this file only adapts the IPC boundary.
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
+use ed25519_dalek::SigningKey;
 use provenance_core::analysis::{self, AnalysisProgress, AnalysisStage, ExactAnalysis};
 use provenance_core::domain::{
-    NewSession, NewStudent, ReferenceLibrary, ReferenceSubmission, Session, SessionUpdate,
-    SourceType, Student, Submission,
+    NewSession, NewStudent, ReferenceLibrary, ReferenceSubmission, Session, SessionLockSummary,
+    SessionUpdate, SourceType, Student, Submission,
 };
 use provenance_core::error::CoreError;
 use provenance_core::import::FileIngestResult;
 use provenance_core::{service, storage};
 use provenance_report::report::{self, ReportMode};
+use provenance_report::signature::{
+    verify_certified_student_report as verify_signed_report, CertifiedStudentReport,
+};
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager, State};
+use zeroize::Zeroize;
 
 struct DbState(SqlitePool);
+struct SigningKeyGate(Mutex<()>);
+
+const SIGNING_KEY_SERVICE: &str = "Provenance Local Reports";
+const SIGNING_KEY_ACCOUNT: &str = "teacher-ed25519-signing-key-v1";
+const MAX_SIGNED_REPORT_JSON_BYTES: usize = 20_000_000;
+
+#[derive(Debug, serde::Serialize)]
+struct CertifiedReportExport {
+    pdf_bytes: Vec<u8>,
+    signed_report_json: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct SignatureVerification {
+    status: &'static str,
+    signing_key_id: String,
+    note: &'static str,
+}
+
+fn load_or_create_signing_key(gate: &SigningKeyGate) -> Result<SigningKey, CoreError> {
+    let _guard = gate.0.lock().map_err(|_| {
+        CoreError::validation("local signing-key access is unavailable; restart the app")
+    })?;
+    let entry = keyring::Entry::new(SIGNING_KEY_SERVICE, SIGNING_KEY_ACCOUNT).map_err(|_| {
+        CoreError::validation(
+            "the operating-system credential store is unavailable; enable Keychain or the platform credential store to certify reports",
+        )
+    })?;
+    let mut seed = [0_u8; 32];
+    match entry.get_secret() {
+        Ok(mut secret) => {
+            if secret.len() != seed.len() {
+                secret.zeroize();
+                return Err(CoreError::validation(
+                    "the stored signing key has an invalid length; certification is blocked",
+                ));
+            }
+            seed.copy_from_slice(&secret);
+            secret.zeroize();
+        }
+        Err(keyring::Error::NoEntry) => {
+            getrandom::fill(&mut seed).map_err(|_| {
+                CoreError::validation(
+                    "the operating system could not generate a secure signing key",
+                )
+            })?;
+            if entry.set_secret(&seed).is_err() {
+                seed.zeroize();
+                return Err(CoreError::validation(
+                    "the signing key could not be saved in the operating-system credential store; certification is blocked",
+                ));
+            }
+        }
+        Err(_) => {
+            return Err(CoreError::validation(
+                "the operating-system credential store could not read the signing key; certification is blocked",
+            ));
+        }
+    }
+    let signing_key = SigningKey::from_bytes(&seed);
+    seed.zeroize();
+    Ok(signing_key)
+}
 
 /// Serializable IPC error: stable code + safe user message, never a stack trace.
 #[derive(Debug, serde::Serialize)]
@@ -332,6 +401,15 @@ async fn analyze_session(
             "session data changed during analysis; run the analysis again",
         )));
     }
+    let current_session = service::get_session(&db.0, &session_id)
+        .await
+        .map_err(CommandError::from)?;
+    if current_session.status == provenance_core::domain::SessionStatus::Locked {
+        return Err(CommandError::from(CoreError::LockedMutation {
+            status: "locked".into(),
+            action: "saving analysis results".into(),
+        }));
+    }
 
     emit_analysis_progress(
         &app,
@@ -393,7 +471,11 @@ async fn generate_student_report_pdf_for(
     report_mode: &str,
 ) -> Result<Vec<u8>, CoreError> {
     let mode = match report_mode {
-        "teacher" => ReportMode::Teacher,
+        "teacher" => {
+            return Err(CoreError::validation(
+                "unsigned teacher PDFs are disabled; lock the session and export its signed report",
+            ));
+        }
         "self_check" => ReportMode::SelfCheck,
         other => {
             return Err(CoreError::validation(format!(
@@ -407,6 +489,26 @@ async fn generate_student_report_pdf_for(
         .map_err(|error| CoreError::validation(error.to_string()))
 }
 
+async fn generate_certified_student_report_for(
+    pool: &SqlitePool,
+    session_id: &str,
+    student_id: &str,
+    anonymize: bool,
+    signing_key: &SigningKey,
+) -> Result<CertifiedReportExport, CoreError> {
+    let certified =
+        service::certify_student_report(pool, session_id, student_id, anonymize, signing_key)
+            .await?;
+    let pdf_bytes = report::render_certified_report_pdf(&certified)
+        .map_err(|error| CoreError::validation(error.to_string()))?;
+    let signed_report_json = serde_json::to_string(&certified)
+        .map_err(|_| CoreError::validation("could not serialize the signed report"))?;
+    Ok(CertifiedReportExport {
+        pdf_bytes,
+        signed_report_json,
+    })
+}
+
 #[tauri::command]
 async fn generate_student_report_pdf(
     db: State<'_, DbState>,
@@ -418,6 +520,72 @@ async fn generate_student_report_pdf(
     generate_student_report_pdf_for(&db.0, &session_id, &student_id, anonymize, &report_mode)
         .await
         .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn lock_session(
+    db: State<'_, DbState>,
+    signing_gate: State<'_, SigningKeyGate>,
+    session_id: String,
+) -> Result<SessionLockSummary, CommandError> {
+    service::validate_session_can_lock(&db.0, &session_id)
+        .await
+        .map_err(CommandError::from)?;
+    let signing_key = load_or_create_signing_key(&signing_gate).map_err(CommandError::from)?;
+    service::lock_session(&db.0, &session_id, &signing_key)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn get_session_lock(
+    db: State<'_, DbState>,
+    session_id: String,
+) -> Result<Option<SessionLockSummary>, CommandError> {
+    service::get_session_lock(&db.0, &session_id)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn generate_certified_student_report(
+    db: State<'_, DbState>,
+    signing_gate: State<'_, SigningKeyGate>,
+    session_id: String,
+    student_id: String,
+    anonymize: bool,
+) -> Result<CertifiedReportExport, CommandError> {
+    let signing_key = load_or_create_signing_key(&signing_gate).map_err(CommandError::from)?;
+    generate_certified_student_report_for(&db.0, &session_id, &student_id, anonymize, &signing_key)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+fn verify_certified_student_report(
+    report_json: String,
+) -> Result<SignatureVerification, CommandError> {
+    if report_json.len() > MAX_SIGNED_REPORT_JSON_BYTES {
+        return Err(CoreError::validation(
+            "signed report file exceeds the 20 MB verification limit",
+        )
+        .into());
+    }
+    let certified: CertifiedStudentReport = serde_json::from_str(&report_json).map_err(|_| {
+        CommandError::from(CoreError::validation(
+            "signed report JSON is invalid or uses an unsupported schema",
+        ))
+    })?;
+    verify_signed_report(&certified).map_err(|error| {
+        CommandError::from(CoreError::validation(format!(
+            "signed report verification failed: {error}"
+        )))
+    })?;
+    Ok(SignatureVerification {
+        status: "verified",
+        signing_key_id: certified.signature.key_id,
+        note: "Signature integrity is valid. Confirm the key ID with the teacher; the embedded key alone does not prove a person's identity.",
+    })
 }
 
 /// Upload a digital text file (TXT/Markdown/PDF/DOCX). Scanned/image-only
@@ -458,6 +626,7 @@ pub fn run() {
                 Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
             })?;
             app.manage(DbState(pool));
+            app.manage(SigningKeyGate(Mutex::new(())));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -477,6 +646,10 @@ pub fn run() {
             analyze_session,
             get_session_analysis,
             generate_student_report_pdf,
+            lock_session,
+            get_session_lock,
+            generate_certified_student_report,
+            verify_certified_student_report,
             archive_completed_session,
             list_reference_libraries,
             list_reference_submissions,
@@ -550,6 +723,15 @@ mod tests {
             )
             .await
             .expect("student");
+            let peer = service::add_student(
+                &pool,
+                &session.id,
+                NewStudent {
+                    display_name: "Comparison Student".into(),
+                },
+            )
+            .await
+            .expect("comparison student");
             service::save_text_submission(
                 &pool,
                 &student.id,
@@ -559,6 +741,15 @@ mod tests {
             )
             .await
             .expect("submission");
+            service::save_text_submission(
+                &pool,
+                &peer.id,
+                SourceType::PastedText,
+                None,
+                b"A separate comparison response with different wording.",
+            )
+            .await
+            .expect("comparison submission");
             let report = analysis::analyze_session_exact(&pool, &session.id)
                 .await
                 .expect("analysis");
@@ -570,14 +761,110 @@ mod tests {
                 .await
                 .expect("persist analysis");
 
-            let pdf =
-                generate_student_report_pdf_for(&pool, &session.id, &student.id, false, "teacher")
-                    .await
-                    .expect("report PDF command contract");
+            let pdf = generate_student_report_pdf_for(
+                &pool,
+                &session.id,
+                &student.id,
+                false,
+                "self_check",
+            )
+            .await
+            .expect("self-check PDF command contract");
             assert!(pdf.starts_with(b"%PDF-"));
             let text = provenance_report::report::extract_pdf_text(&pdf).expect("PDF text");
             assert!(text.contains("Report Student"));
             assert!(text.contains("This report identifies matching or reused content"));
+        });
+    }
+
+    #[test]
+    fn certified_report_command_contract_signs_pdf_and_verifiable_json() {
+        tauri::async_runtime::block_on(async {
+            let base = tempfile::tempdir().expect("temp directory");
+            let pool = storage::open(&base.path().join("certified-report.db"))
+                .await
+                .expect("database");
+            let session = service::create_session(
+                &pool,
+                NewSession {
+                    name: "Certified command test".into(),
+                    subject: Some("History".into()),
+                },
+            )
+            .await
+            .expect("session");
+            let first = service::add_student(
+                &pool,
+                &session.id,
+                NewStudent {
+                    display_name: "First Student".into(),
+                },
+            )
+            .await
+            .expect("first student");
+            let target = service::add_student(
+                &pool,
+                &session.id,
+                NewStudent {
+                    display_name: "Report Student".into(),
+                },
+            )
+            .await
+            .expect("target student");
+            service::save_text_submission(
+                &pool,
+                &first.id,
+                SourceType::PastedText,
+                None,
+                b"An independent source passage for the signed report.",
+            )
+            .await
+            .expect("first submission");
+            service::save_text_submission(
+                &pool,
+                &target.id,
+                SourceType::PastedText,
+                None,
+                b"A separate response used to verify the teacher certificate.",
+            )
+            .await
+            .expect("target submission");
+            let report = analysis::analyze_session_exact(&pool, &session.id)
+                .await
+                .expect("analysis");
+            let input_hash = analysis::session_analysis_input_hash(&pool, &session.id)
+                .await
+                .expect("input digest");
+            storage::AnalysisRepo::save_result(
+                &pool,
+                &session.id,
+                &input_hash,
+                &serde_json::to_string(&report).unwrap(),
+            )
+            .await
+            .expect("persist analysis");
+            let key = SigningKey::from_bytes(&[21; 32]);
+            service::lock_session(&pool, &session.id, &key)
+                .await
+                .expect("lock session");
+
+            let exported =
+                generate_certified_student_report_for(&pool, &session.id, &target.id, false, &key)
+                    .await
+                    .expect("signed report export");
+            assert!(exported.pdf_bytes.starts_with(b"%PDF-"));
+            let pdf_text = report::extract_pdf_text(&exported.pdf_bytes).unwrap();
+            assert!(pdf_text.contains("Teacher-certified session"));
+            assert!(pdf_text.contains("This report identifies matching or reused content"));
+            let verification = verify_certified_student_report(exported.signed_report_json.clone())
+                .expect("JSON verification command");
+            assert_eq!(verification.status, "verified");
+
+            let mut altered: CertifiedStudentReport =
+                serde_json::from_str(&exported.signed_report_json).unwrap();
+            altered.report.payload.session_name.push('!');
+            let altered_json = serde_json::to_string(&altered).unwrap();
+            assert!(verify_certified_student_report(altered_json).is_err());
         });
     }
 }

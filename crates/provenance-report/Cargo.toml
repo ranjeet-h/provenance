@@ -15,3 +15,5 @@ provenance-match = { version = "0.1.0", path = "../provenance-match" }
 printpdf = { version = "0.12.8", default-features = false, features = ["html"] }
 pdf-extract = "0.12.0"
 ttf-parser = "0.25.1"
+ed25519-dalek = "3.0.0"
+qrcode-generator = { version = "6.1.0", default-features = false, features = ["qr"] }

@@ -60,10 +60,14 @@ function RenameSessionForm({ session }: { session: Session }) {
     }
   }
 
+  if (session.status === "locked") {
+    return <p className="mt-4 rounded-xl border border-border/80 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">Session name is frozen by its signed lock.</p>;
+  }
+
   return (
-    <section aria-label="Rename session" className="rounded-lg border p-4">
-      <h2 className="text-sm font-medium">Rename session</h2>
-      <form className="mt-2 flex max-w-md gap-2" onSubmit={(e) => void onRename(e)}>
+    <section aria-label="Rename session" className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm shadow-slate-900/[0.02] sm:p-5">
+      <h2 className="text-sm font-semibold">Rename session</h2>
+      <form className="mt-3 flex max-w-lg flex-col gap-2 sm:flex-row" onSubmit={(e) => void onRename(e)}>
         <Input
           aria-label="Session name"
           value={rename}
@@ -110,8 +114,8 @@ function SessionSettingsForm({ session }: { session: Session }) {
   }
 
   return (
-    <section aria-label="Session settings" className="mt-4 rounded-lg border p-4">
-      <h2 className="text-sm font-medium">Session settings</h2>
+    <section aria-label="Session settings" className="mt-4 rounded-2xl border border-border/80 bg-card p-4 shadow-sm shadow-slate-900/[0.02] sm:p-5">
+      <h2 className="text-sm font-semibold">Session settings</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         The assignment question is excluded from overlap scoring. Text shared
         across many submissions is flagged as shared but still counted —
@@ -127,8 +131,9 @@ function SessionSettingsForm({ session }: { session: Session }) {
             rows={3}
             value={prompt}
             onChange={(e) => setPrompt(e.currentTarget.value)}
+            disabled={session.status === "locked"}
             placeholder="Paste the assignment question every student received…"
-            className="flex min-h-[72px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex min-h-[88px] w-full rounded-xl border border-input bg-background px-3 py-2.5 text-sm leading-relaxed shadow-sm shadow-slate-900/[0.02] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <div className="space-y-1">
@@ -140,8 +145,9 @@ function SessionSettingsForm({ session }: { session: Session }) {
             rows={2}
             value={reference}
             onChange={(e) => setReference(e.currentTarget.value)}
+            disabled={session.status === "locked"}
             placeholder="Required declarations, standard headings…"
-            className="flex min-h-[56px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex min-h-[72px] w-full rounded-xl border border-input bg-background px-3 py-2.5 text-sm leading-relaxed shadow-sm shadow-slate-900/[0.02] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <div className="flex items-center gap-2">
@@ -150,6 +156,7 @@ function SessionSettingsForm({ session }: { session: Session }) {
             type="checkbox"
             checked={excludeCommon}
             onChange={(e) => setExcludeCommon(e.currentTarget.checked)}
+            disabled={session.status === "locked"}
             className="h-4 w-4 rounded border-input"
           />
           <label htmlFor={`exclude-common-${session.id}`} className="text-sm">
@@ -166,15 +173,16 @@ function SessionSettingsForm({ session }: { session: Session }) {
             {message.text}
           </p>
         ) : null}
-        <Button type="submit" variant="outline" disabled={saving}>
+        <Button type="submit" variant="outline" disabled={saving || session.status === "locked"}>
           {saving ? "Saving…" : "Save settings"}
         </Button>
+        {session.status === "locked" ? <p className="text-xs text-muted-foreground">Settings are frozen by the signed session lock.</p> : null}
       </form>
     </section>
   );
 }
 
-function SessionReferenceLibraries({ sessionId }: { sessionId: string }) {
+function SessionReferenceLibraries({ sessionId, locked }: { sessionId: string; locked: boolean }) {
   const queryClient = useQueryClient();
   const [saving, setSaving] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
@@ -209,8 +217,8 @@ function SessionReferenceLibraries({ sessionId }: { sessionId: string }) {
   }
 
   return (
-    <section aria-label="Historical comparison libraries" className="mt-4 rounded-lg border p-4">
-      <h2 className="text-sm font-medium">Historical comparison libraries</h2>
+    <section id="session-reference-libraries" aria-label="Historical comparison libraries" className="mt-4 rounded-2xl border border-border/80 bg-card p-4 shadow-sm shadow-slate-900/[0.02] sm:p-5">
+      <h2 className="text-sm font-semibold">Historical comparison libraries</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         Selected archives are compared independently; historical matches never
         affect current-student scores.
@@ -229,11 +237,11 @@ function SessionReferenceLibraries({ sessionId }: { sessionId: string }) {
         <ul className="mt-3 space-y-2">
           {librariesQuery.data.map((library) => (
             <li key={library.id}>
-              <label className="flex items-start gap-2 text-sm">
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-background px-3 py-3 text-sm transition-colors hover:bg-muted/40">
                 <input
                   type="checkbox"
                   checked={selected.includes(library.id)}
-                  disabled={saving}
+                  disabled={saving || locked}
                   onChange={(event) => void onToggle(library.id, event.currentTarget.checked)}
                   className="mt-0.5 h-4 w-4 rounded border-input"
                 />
@@ -249,6 +257,7 @@ function SessionReferenceLibraries({ sessionId }: { sessionId: string }) {
         </ul>
       )}
       {message ? <p role="status" className="mt-2 text-xs text-muted-foreground">{message}</p> : null}
+      {locked ? <p className="mt-2 text-xs text-muted-foreground">Selected comparison libraries are frozen by the signed lock.</p> : null}
     </section>
   );
 }
@@ -275,13 +284,13 @@ function ArchiveSessionForm({ session }: { session: Session }) {
   }
 
   return (
-    <section aria-label="Archive session as reference library" className="mt-4 rounded-lg border p-4">
-      <h2 className="text-sm font-medium">Archive this session</h2>
+    <section aria-label="Archive session as reference library" className="mt-4 rounded-2xl border border-border/80 bg-card p-4 shadow-sm shadow-slate-900/[0.02] sm:p-5">
+      <h2 className="text-sm font-semibold">Archive this session</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         Creates a read-only text snapshot. A current saved analysis and at least
         two non-empty student submissions are required.
       </p>
-      <form className="mt-3 flex max-w-md gap-2" onSubmit={(event) => void onArchive(event)}>
+      <form className="mt-3 flex max-w-lg flex-col gap-2 sm:flex-row" onSubmit={(event) => void onArchive(event)}>
         <Input
           aria-label="Reference library name"
           value={name}
@@ -404,19 +413,26 @@ export function SessionDetailPage() {
       <RenameSessionForm key={session.id} session={session} />
 
       <SessionSettingsForm key={`settings-${session.id}`} session={session} />
-      <SessionReferenceLibraries sessionId={session.id} />
+      <SessionReferenceLibraries sessionId={session.id} locked={session.status === "locked"} />
       <ArchiveSessionForm session={session} />
 
-      <section aria-label="Students" className="mt-6">
-        <h2 className="text-lg font-medium">Students</h2>
-        <form className="mt-2 flex max-w-md gap-2" onSubmit={(e) => void onAddStudent(e)}>
+      <section aria-label="Students" className="mt-7 rounded-2xl border border-border/80 bg-card p-4 shadow-sm shadow-slate-900/[0.025] sm:p-5">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Roster</p>
+            <h2 className="mt-1 text-lg font-semibold tracking-tight">Students <span className="text-sm font-medium text-muted-foreground">({students.length})</span></h2>
+          </div>
+          {session.status === "locked" ? <span className="rounded-full border px-2.5 py-1 text-xs text-muted-foreground">Roster frozen</span> : null}
+        </div>
+        <form className="mt-4 flex max-w-lg flex-col gap-2 sm:flex-row" onSubmit={(e) => void onAddStudent(e)}>
           <Input
             aria-label="Student name"
             placeholder="Add a student…"
             value={studentName}
             onChange={(e) => setStudentName(e.currentTarget.value)}
+            disabled={session.status === "locked"}
           />
-          <Button type="submit">
+          <Button type="submit" disabled={session.status === "locked"}>
             <UserPlus className="h-4 w-4" aria-hidden />
             Add
           </Button>
@@ -439,11 +455,11 @@ export function SessionDetailPage() {
               description="Add the solvers for this assignment."
             />
           ) : (
-            <ul className="divide-y rounded-lg border" aria-label="Student list">
+            <ul className="grid gap-2" aria-label="Student list">
               {students.map((student) => {
                 const submission = submissionsByStudent.get(student.id);
                 return (
-                  <li key={student.id} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <li key={student.id} className="flex flex-col gap-3 rounded-xl border border-border/70 bg-background p-3.5 sm:flex-row sm:items-center sm:justify-between sm:p-4">
                     <div className="min-w-0">
                       <span className="text-sm font-medium">{student.display_name}</span>
                       <p className="truncate text-xs text-muted-foreground">
@@ -465,7 +481,7 @@ export function SessionDetailPage() {
                         </p>
                       ) : null}
                     </div>
-                    <div className="flex shrink-0 items-center gap-1">
+                    <div className="flex shrink-0 flex-wrap items-center gap-1 sm:justify-end">
                       <SubmissionDialog
                         studentName={student.display_name}
                         studentId={student.id}
@@ -477,7 +493,7 @@ export function SessionDetailPage() {
                           void refreshSubmissions();
                         }}
                         trigger={
-                          <Button variant="outline" size="sm">
+                          <Button variant="outline" size="sm" disabled={session.status === "locked"}>
                             {submission ? "View / Replace" : "Add submission"}
                           </Button>
                         }
@@ -488,7 +504,7 @@ export function SessionDetailPage() {
                         confirmLabel="Remove"
                         onConfirm={() => void onRemoveStudent(student.id)}
                         trigger={
-                          <Button variant="ghost" size="sm" aria-label={`Remove ${student.display_name}`}>
+                          <Button variant="ghost" size="sm" aria-label={`Remove ${student.display_name}`} disabled={session.status === "locked"}>
                             <Trash2 className="h-4 w-4" aria-hidden />
                             Remove
                           </Button>
@@ -507,16 +523,17 @@ export function SessionDetailPage() {
         sessionId={session.id}
         students={students}
         submissionCount={submissionsByStudent.size}
+        sessionStatus={session.status}
       />
 
-      <Separator className="my-6" />
+      <Separator className="my-7" />
       <ConfirmDialog
         title={`Delete ${session.name}?`}
         description="This removes the session and its students. This cannot be undone."
         confirmLabel="Delete"
         onConfirm={() => void onDeleteSession()}
         trigger={
-          <Button variant="destructive" aria-label={`Delete ${session.name}`}>
+          <Button variant="destructive" aria-label={`Delete ${session.name}`} disabled={session.status === "locked"}>
             <Trash2 className="h-4 w-4" aria-hidden />
             Delete session
           </Button>

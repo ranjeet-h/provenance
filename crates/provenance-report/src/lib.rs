@@ -3,6 +3,7 @@
 
 pub mod plagpack;
 pub mod report;
+pub mod signature;
 
 #[must_use]
 pub fn workspace_marker() -> &'static str {

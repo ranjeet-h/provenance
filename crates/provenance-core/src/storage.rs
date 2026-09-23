@@ -13,7 +13,7 @@ use crate::domain::{
 use crate::error::CoreError;
 
 /// Current schema version. Bump with a new `MIGRATION_Vn` block.
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 const MIGRATION_V1: &str = "
 CREATE TABLE IF NOT EXISTS sessions (
@@ -113,6 +113,17 @@ CREATE TABLE session_reference_libraries (
 );
 ";
 
+/// Phase 20: one immutable, signed manifest for every locked session.
+const MIGRATION_V6: &str = "
+CREATE TABLE session_locks (
+  session_id TEXT PRIMARY KEY REFERENCES sessions (id) ON DELETE CASCADE,
+  manifest_json TEXT NOT NULL,
+  manifest_sha256 TEXT NOT NULL,
+  signature_json TEXT NOT NULL,
+  locked_at TEXT NOT NULL
+);
+";
+
 async fn apply_migration(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     migration: &str,
@@ -177,6 +188,9 @@ pub async fn migrate(pool: &SqlitePool) -> Result<(), CoreError> {
     }
     if current < 5 {
         apply_migration(&mut tx, MIGRATION_V5, 5).await?;
+    }
+    if current < 6 {
+        apply_migration(&mut tx, MIGRATION_V6, 6).await?;
     }
     tx.commit().await.map_err(CoreError::Database)?;
     Ok(())
@@ -523,6 +537,98 @@ impl SubmissionRepo {
 /// Results are returned only for an exact input digest match; stale rows are
 /// never presented as current.
 pub struct AnalysisRepo;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionLockRecord {
+    pub session_id: String,
+    pub manifest_json: String,
+    pub manifest_sha256: String,
+    pub signature_json: String,
+    pub locked_at: String,
+}
+
+pub struct SessionLockRepo;
+
+impl SessionLockRepo {
+    pub async fn get(
+        pool: &SqlitePool,
+        session_id: &str,
+    ) -> Result<Option<SessionLockRecord>, CoreError> {
+        let row = sqlx::query(
+            "SELECT session_id, manifest_json, manifest_sha256, signature_json, locked_at
+             FROM session_locks WHERE session_id = ?",
+        )
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(CoreError::Database)?;
+        row.map(|row| {
+            Ok(SessionLockRecord {
+                session_id: row.try_get("session_id").map_err(CoreError::Database)?,
+                manifest_json: row.try_get("manifest_json").map_err(CoreError::Database)?,
+                manifest_sha256: row
+                    .try_get("manifest_sha256")
+                    .map_err(CoreError::Database)?,
+                signature_json: row.try_get("signature_json").map_err(CoreError::Database)?,
+                locked_at: row.try_get("locked_at").map_err(CoreError::Database)?,
+            })
+        })
+        .transpose()
+    }
+
+    pub async fn insert_and_lock(
+        pool: &SqlitePool,
+        record: &SessionLockRecord,
+    ) -> Result<(), CoreError> {
+        let mut tx = pool.begin().await.map_err(CoreError::Database)?;
+        sqlx::query(
+            "INSERT INTO session_locks
+             (session_id, manifest_json, manifest_sha256, signature_json, locked_at)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(&record.session_id)
+        .bind(&record.manifest_json)
+        .bind(&record.manifest_sha256)
+        .bind(&record.signature_json)
+        .bind(&record.locked_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(CoreError::Database)?;
+        let changed = sqlx::query(
+            "UPDATE sessions SET status = 'locked', updated_at = ?
+             WHERE id = ? AND status != 'locked'",
+        )
+        .bind(&record.locked_at)
+        .bind(&record.session_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(CoreError::Database)?
+        .rows_affected();
+        if changed != 1 {
+            return Err(CoreError::LockedMutation {
+                status: "locked".into(),
+                action: "locking again or replacing the existing certificate".into(),
+            });
+        }
+        tx.commit().await.map_err(CoreError::Database)
+    }
+
+    pub async fn selected_by_locked_session(
+        pool: &SqlitePool,
+        library_id: &str,
+    ) -> Result<Option<String>, CoreError> {
+        sqlx::query_scalar(
+            "SELECT s.id FROM sessions s
+             JOIN session_reference_libraries selected ON selected.session_id = s.id
+             JOIN session_locks locks ON locks.session_id = s.id
+             WHERE selected.library_id = ? AND s.status = 'locked' LIMIT 1",
+        )
+        .bind(library_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(CoreError::Database)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawPairEvidenceRecord {

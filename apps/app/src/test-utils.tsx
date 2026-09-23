@@ -4,7 +4,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { createAppRouter } from "./router";
 import type { InvokeFn } from "./lib/tauri";
 import { MAX_UPLOAD_BYTES } from "./lib/sessions";
-import type { Session, Student, Submission } from "./lib/sessions";
+import type { Session, SessionLockSummary, Student, Submission } from "./lib/sessions";
 import type { ReferenceLibrary, ReferenceSubmission } from "./lib/referenceLibraries";
 
 interface FakeDb {
@@ -14,6 +14,7 @@ interface FakeDb {
   referenceLibraries: ReferenceLibrary[];
   referenceSubmissions: ReferenceSubmission[];
   selectedReferenceLibraries: Record<string, string[]>;
+  sessionLocks: Record<string, SessionLockSummary>;
 }
 
 function now(): string {
@@ -34,6 +35,7 @@ export function createFakeSessions(seed?: Partial<FakeDb>): {
     selectedReferenceLibraries: seed?.selectedReferenceLibraries
       ? { ...seed.selectedReferenceLibraries }
       : {},
+    sessionLocks: seed?.sessionLocks ? { ...seed.sessionLocks } : {},
   };
   const savedAnalyses = new Map<string, unknown>();
   let counter = 1000;
@@ -69,6 +71,24 @@ export function createFakeSessions(seed?: Partial<FakeDb>): {
       case "get_session": {
         const found = db.sessions.find((s) => s.id === args["id"]);
         return found ? Promise.resolve(found) : fail("not_found", "session not found");
+      }
+      case "get_session_lock":
+        return Promise.resolve(db.sessionLocks[String(args["sessionId"])] ?? null);
+      case "lock_session": {
+        const session = db.sessions.find((item) => item.id === args["sessionId"]);
+        if (!session) return fail("not_found", "session not found");
+        if (!savedAnalyses.has(session.id)) {
+          return fail("validation", "run analysis for current inputs before locking");
+        }
+        const lock: SessionLockSummary = {
+          session_id: session.id,
+          locked_at: now(),
+          manifest_sha256: "a".repeat(64),
+          signing_key_id: "b".repeat(64),
+        };
+        session.status = "locked";
+        db.sessionLocks[session.id] = lock;
+        return Promise.resolve(lock);
       }
       case "update_session": {
         const found = db.sessions.find((s) => s.id === args["id"]);
@@ -347,6 +367,27 @@ export function createFakeSessions(seed?: Partial<FakeDb>): {
         return Promise.resolve(savedAnalyses.get(String(args["sessionId"])) ?? null);
       case "generate_student_report_pdf":
         return Promise.resolve([37, 80, 68, 70, 45]);
+      case "generate_certified_student_report":
+        return Promise.resolve({
+          pdf_bytes: [37, 80, 68, 70, 45],
+          signed_report_json: JSON.stringify({
+            schema_version: 1,
+            lock_sha256: "a".repeat(64),
+            report: { payload: { report_mode: "teacher" } },
+            signature: {
+              algorithm: "Ed25519",
+              key_id: "b".repeat(64),
+              public_key_hex: "c".repeat(64),
+              signature_hex: "d".repeat(128),
+            },
+          }),
+        });
+      case "verify_certified_student_report":
+        return Promise.resolve({
+          status: "verified",
+          signing_key_id: "b".repeat(64),
+          note: "Signature integrity is valid.",
+        });
       case "analyze_session": {
         const result = fakeAnalyze(db, String(args["sessionId"]));
         savedAnalyses.set(String(args["sessionId"]), result);

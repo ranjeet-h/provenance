@@ -17,6 +17,15 @@ export const SessionSchema = z.object({
 
 export type Session = z.infer<typeof SessionSchema>;
 
+export const SessionLockSummarySchema = z.object({
+  session_id: z.string().min(1),
+  locked_at: z.string().min(1),
+  manifest_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  signing_key_id: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+export type SessionLockSummary = z.infer<typeof SessionLockSummarySchema>;
+
 export const StudentSchema = z.object({
   id: z.string().min(1),
   session_id: z.string().min(1),
@@ -132,6 +141,18 @@ export function createSession(input: { name: string; subject?: string | null }):
 
 export function getSession(id: string): Promise<Session> {
   return call("get_session", { id }, SessionSchema);
+}
+
+export function lockSession(sessionId: string): Promise<SessionLockSummary> {
+  return call("lock_session", { sessionId }, SessionLockSummarySchema);
+}
+
+export function getSessionLock(sessionId: string): Promise<SessionLockSummary | null> {
+  return call(
+    "get_session_lock",
+    { sessionId },
+    SessionLockSummarySchema.nullable(),
+  );
 }
 
 export function updateSession(

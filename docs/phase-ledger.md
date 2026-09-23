@@ -57,3 +57,14 @@ test and explicitly approve them.
 | 17 — Reference Libraries | Current-input-gated immutable session snapshots; read-only corpus management; per-session selection; selected-library digest invalidation; separate exact/modified historical evidence; detached archive and current-vs-historical separation tests; Tauri/UI flows | Pending user test |
 | 18 — `.plagpack` Portable Reference Format | Strict two-entry compressed package; anonymized labels/no source filenames; original + canonical text and engine metadata; payload/document hash verification; duplicate deduplication; corrupt, oversized, unsupported-version, and non-text rejection; export-delete-import-compare integration; Tauri/UI import/export | Pending user test |
 | 19 — Report Generation | Digest-gated per-student evidence payloads; separate current/historical matches; anonymization, exclusions, span/source integrity and SHA-256 checks; local PDF with embedded licensed font; validated two-sided colored spans, long/zero/current/historical/mixed fixtures, exact footer; Tauri export command and tested UI download | Pending user test |
+| 20 — Certified Sessions and Cryptographic Integrity | Ed25519 signing and verification; SHA-256 signed session lock covering current submissions, selected archives, engine/configuration, and exact saved analysis; operating-system credential store; locked mutation rejection; certified PDF with QR payload and signed JSON companion; tamper, wrong-key, self-check rejection, lock persistence, and Tauri command tests | Pending user test |
+| 21 — Student Self-Check Mode | Explicit local comparison-source requirement; selected corpus shown in UI and report; separate unsigned Self Check PDF marked Not Teacher Certified; no signing-path access; single-student historical-corpus, source-guard, and frontend flow tests | Pending user test |
+
+## App-wide UX update awaiting user review
+
+The desktop UI now has a unified light palette and type scale, persistent
+workspace navigation with a mobile drawer, clearer dashboard/session/library
+hierarchy, session search and counts, responsive student/submission controls,
+and consistent cards, status badges, forms, analysis, empty, loading, and error
+states. This is an implementation note, not user approval; inspect at desktop
+and narrow window sizes during the manual test.

@@ -582,6 +582,12 @@ where
         0,
     );
     let session = SessionRepo::get(pool, session_id).await?;
+    if session.status == crate::domain::SessionStatus::Locked {
+        return Err(CoreError::LockedMutation {
+            status: "locked".into(),
+            action: "rerunning analysis".into(),
+        });
+    }
     let students = list_students(pool, session_id).await?;
     let submissions = SubmissionRepo::list_by_session(pool, session_id).await?;
     let selected_references = ReferenceLibraryRepo::selected_submissions(pool, session_id).await?;
