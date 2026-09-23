@@ -106,6 +106,8 @@ fn three_way_session_flags_only_the_copied_pair() {
         pair_cov(ab, &b)
     );
     assert!(!ab.passages.is_empty());
+    assert!(ab.exact_coverage_a.unwrap() > 0.0);
+    assert_eq!(ab.modified_coverage_a, Some(0.0));
     assert_eq!(pair(&a, &c).passages.len(), 0);
     assert_eq!(pair(&b, &c).passages.len(), 0);
 
@@ -119,6 +121,11 @@ fn three_way_session_flags_only_the_copied_pair() {
     // Per-student coverage: copiers flagged, unrelated clean.
     assert!(cov_of(&report, &a) > 0.0 && cov_of(&report, &b) > 0.0);
     assert_eq!(cov_of(&report, &c), 0.0);
+    for row in &report.per_student {
+        let combined = row.coverage.unwrap();
+        let by_kind = row.exact_coverage.unwrap() + row.modified_coverage.unwrap();
+        assert!(combined <= by_kind + f64::EPSILON * 8.0);
+    }
 }
 
 fn cov_of(report: &ExactAnalysis, id: &str) -> f64 {
@@ -624,6 +631,10 @@ fn lightly_edited_copy_reported_as_modified_evidence() {
     let excerpt = &sub_a.original_text[pair.passages[0].a_char_start..pair.passages[0].a_char_end];
     assert!(excerpt.contains("Photosynthesis"), "excerpt: {excerpt}");
     assert!(pair_cov(pair, &a) > 0.0);
+    assert_eq!(pair.exact_coverage_a, Some(0.0));
+    assert!(pair.modified_coverage_a.unwrap() > 0.0);
+    assert_eq!(pair.exact_coverage_b, Some(0.0));
+    assert!(pair.modified_coverage_b.unwrap() > 0.0);
 }
 
 #[test]
@@ -643,6 +654,8 @@ fn verbatim_copy_stays_exact_with_no_identity() {
         pair.passages
     );
     assert_eq!(pair.coverage_a, Some(100.0));
+    assert_eq!(pair.exact_coverage_a, Some(100.0));
+    assert_eq!(pair.modified_coverage_a, Some(0.0));
 }
 
 #[test]
@@ -752,6 +765,8 @@ fn fully_excluded_submission_reports_insufficient_text() {
     }
     assert_eq!(report.pairs[0].coverage_a, None);
     assert_eq!(report.pairs[0].coverage_b, None);
+    assert_eq!(report.pairs[0].exact_coverage_a, None);
+    assert_eq!(report.pairs[0].modified_coverage_b, None);
 }
 
 /// Contract pin: the committed `tests/fixtures/exact-analysis-sample.json`
@@ -845,6 +860,8 @@ fn recorded_fixture_matches_engine() {
         }
         swap_fields(pair, "a_student_id", "b_student_id");
         swap_fields(pair, "coverage_a", "coverage_b");
+        swap_fields(pair, "exact_coverage_a", "exact_coverage_b");
+        swap_fields(pair, "modified_coverage_a", "modified_coverage_b");
         if let Some(passages) = pair.get_mut("passages").and_then(|p| p.as_array_mut()) {
             for passage in passages.iter_mut() {
                 swap_fields(passage, "a_token_start", "b_token_start");
@@ -891,6 +908,17 @@ fn recorded_fixture_matches_engine() {
         serde_json::from_str(&std::fs::read_to_string(&path).expect("committed fixture"))
             .expect("fixture parses");
     let (cf, cc) = (canonical(fresh), canonical(committed));
+    let amit = cf["per_student"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["student_id"] == "stud-amit")
+        .unwrap();
+    assert!(
+        amit["exact_coverage"].as_f64().unwrap() + amit["modified_coverage"].as_f64().unwrap()
+            > amit["coverage"].as_f64().unwrap(),
+        "the fixture should prove per-type percentages can overlap and must not be added"
+    );
     assert_eq!(
         cf, cc,
         "fixture drifted from engine output — regenerate from the engine, never hand-edit"

@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   analyzeSession,
   cellCoverage,
+  cellCoverageByKind,
   exclusionLabel,
   type ExactAnalysis,
   type PairAnalysis,
@@ -19,6 +20,10 @@ import { cn } from "@/lib/utils";
 
 function formatPct(value: number): string {
   return `${Math.round(value)}%`;
+}
+
+function formatOptionalPct(value: number | null | undefined): string {
+  return value === null || value === undefined ? "not assessable" : formatPct(value);
 }
 
 export function AnalysisSection({
@@ -191,6 +196,12 @@ export function AnalysisSection({
                     )}
                   </div>
                   {row.coverage === null || row.coverage === undefined ? null : (
+                    <p className="text-xs text-muted-foreground">
+                      Exact {formatOptionalPct(row.exact_coverage)} · Modified {formatOptionalPct(row.modified_coverage)}
+                      <span className="ml-1">(breakdown only; do not add)</span>
+                    </p>
+                  )}
+                  {row.coverage === null || row.coverage === undefined ? null : (
                     <ProgressIndicator value={row.coverage} label={`Overlap for ${nameById.get(row.student_id) ?? "student"}`} />
                   )}
                 </li>
@@ -212,6 +223,10 @@ export function AnalysisSection({
                   ? "not assessable"
                   : formatPct(selectedPair.coverage_b)}
               </h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {nameById.get(selectedPair.a_student_id)}: exact {formatOptionalPct(cellCoverageByKind(selectedPair, selectedPair.a_student_id, "exact"))}, modified {formatOptionalPct(cellCoverageByKind(selectedPair, selectedPair.a_student_id, "modified"))} ·{" "}
+                {nameById.get(selectedPair.b_student_id)}: exact {formatOptionalPct(cellCoverageByKind(selectedPair, selectedPair.b_student_id, "exact"))}, modified {formatOptionalPct(cellCoverageByKind(selectedPair, selectedPair.b_student_id, "modified"))}. Type values are subsets; combined coverage uses unique spans.
+              </p>
               {selectedPair.passages.length === 0 ? (
                 <p className="mt-2 text-sm text-muted-foreground">
                   No matching passages detected between these two submissions.

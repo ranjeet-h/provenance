@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { resetInvokeImpl, setInvokeImpl } from "../lib/tauri";
-import { analyzeSession, cellCoverage } from "../lib/analysis";
+import { analyzeSession, cellCoverage, cellCoverageByKind } from "../lib/analysis";
 import {
   createFakeSessions,
   renderRouteAt,
@@ -78,12 +78,19 @@ describe("analysis API", () => {
       b_student_id: "b",
       coverage_a: 50,
       coverage_b: 25,
+      exact_coverage_a: 40,
+      exact_coverage_b: 20,
+      modified_coverage_a: 10,
+      modified_coverage_b: 5,
       passages: [],
       excluded: [],
     };
     expect(cellCoverage(pair, "a")).toBe(50);
     expect(cellCoverage(pair, "b")).toBe(25);
     expect(cellCoverage(pair, "c")).toBeNull();
+    expect(cellCoverageByKind(pair, "a", "exact")).toBe(40);
+    expect(cellCoverageByKind(pair, "b", "modified")).toBe(5);
+    expect(cellCoverageByKind(pair, "c", "exact")).toBeNull();
   });
 });
 
@@ -125,6 +132,7 @@ describe("analysis section", () => {
 
     const detail = await screen.findByLabelText(/pair detail/i);
     expect(within(detail).getByText(/passage 1 · \d+ matching words/i)).toBeInTheDocument();
+    expect(within(detail).getByText(/type values are subsets; combined coverage uses unique spans/i)).toBeInTheDocument();
     const marks = within(detail).getAllByText(/rapid expansion of railway networks/i);
     expect(marks.length).toBeGreaterThanOrEqual(2);
     expect(marks[0]?.tagName).toBe("MARK");

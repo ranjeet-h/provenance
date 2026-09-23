@@ -83,6 +83,15 @@ pub struct PairAnalysis {
     pub coverage_a: Option<f64>,
     /// % of B's eligible tokens matched. `None` when not assessable.
     pub coverage_b: Option<f64>,
+    /// Exact-only coverage on each side. These values are diagnostic
+    /// breakdowns; they must not be added to modified coverage because the
+    /// overall score is calculated from the union of all evidence spans.
+    pub exact_coverage_a: Option<f64>,
+    pub exact_coverage_b: Option<f64>,
+    /// Modified-only coverage on each side. `Some(0)` means assessable with
+    /// no modified matches; `None` means insufficient assessable text.
+    pub modified_coverage_a: Option<f64>,
+    pub modified_coverage_b: Option<f64>,
     pub passages: Vec<PassageEvidence>,
     pub excluded: Vec<ExcludedEvidence>,
 }
@@ -92,6 +101,10 @@ pub struct StudentExactCoverage {
     pub student_id: String,
     /// `None` means insufficient assessable text — never a clean 0%.
     pub coverage: Option<f64>,
+    /// Exact-only subset of `coverage`; do not add to modified coverage.
+    pub exact_coverage: Option<f64>,
+    /// Modified-only subset of `coverage`; do not add to exact coverage.
+    pub modified_coverage: Option<f64>,
     pub matched_tokens: usize,
     pub total_tokens: usize,
     pub eligible_tokens: usize,
@@ -241,6 +254,8 @@ pub async fn analyze_session_exact(
 
     let mut pairs = Vec::new();
     let mut kept_spans: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
+    let mut kept_exact_spans: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
+    let mut kept_modified_spans: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
 
     for i in 0..docs.len() {
         for j in (i + 1)..docs.len() {
@@ -409,6 +424,10 @@ pub async fn analyze_session_exact(
             union_b.extend(mod_b_ranges.iter().copied());
             let coverage_a = eligible_coverage(&union_a, eligible[i]);
             let coverage_b = eligible_coverage(&union_b, eligible[j]);
+            let exact_coverage_a = eligible_coverage(&counted_a, eligible[i]);
+            let exact_coverage_b = eligible_coverage(&counted_b, eligible[j]);
+            let modified_coverage_a = eligible_coverage(&mod_a_ranges, eligible[i]);
+            let modified_coverage_b = eligible_coverage(&mod_b_ranges, eligible[j]);
 
             let mut excluded = Vec::new();
             for (side, spans, doc) in [
@@ -432,17 +451,33 @@ pub async fn analyze_session_exact(
             excluded.extend(mod_excluded);
             excluded.sort_by_key(|e| (e.side as u8, e.token_start));
 
-            for (s, e) in counted_a {
+            for &(s, e) in &counted_a {
                 kept_spans.entry(ids[i].clone()).or_default().push((s, e));
+                kept_exact_spans
+                    .entry(ids[i].clone())
+                    .or_default()
+                    .push((s, e));
             }
-            for (s, e) in counted_b {
+            for &(s, e) in &counted_b {
                 kept_spans.entry(ids[j].clone()).or_default().push((s, e));
+                kept_exact_spans
+                    .entry(ids[j].clone())
+                    .or_default()
+                    .push((s, e));
             }
-            for (s, e) in mod_a_ranges {
+            for &(s, e) in &mod_a_ranges {
                 kept_spans.entry(ids[i].clone()).or_default().push((s, e));
+                kept_modified_spans
+                    .entry(ids[i].clone())
+                    .or_default()
+                    .push((s, e));
             }
-            for (s, e) in mod_b_ranges {
+            for &(s, e) in &mod_b_ranges {
                 kept_spans.entry(ids[j].clone()).or_default().push((s, e));
+                kept_modified_spans
+                    .entry(ids[j].clone())
+                    .or_default()
+                    .push((s, e));
             }
 
             pairs.push(PairAnalysis {
@@ -450,6 +485,10 @@ pub async fn analyze_session_exact(
                 b_student_id: ids[j].clone(),
                 coverage_a,
                 coverage_b,
+                exact_coverage_a,
+                exact_coverage_b,
+                modified_coverage_a,
+                modified_coverage_b,
                 passages,
                 excluded,
             });
@@ -482,6 +521,14 @@ pub async fn analyze_session_exact(
                     &kept_spans.get(&s.id).cloned().unwrap_or_default(),
                     eligible_tokens,
                 ),
+                exact_coverage: eligible_coverage(
+                    &kept_exact_spans.get(&s.id).cloned().unwrap_or_default(),
+                    eligible_tokens,
+                ),
+                modified_coverage: eligible_coverage(
+                    &kept_modified_spans.get(&s.id).cloned().unwrap_or_default(),
+                    eligible_tokens,
+                ),
                 matched_tokens: matched,
                 total_tokens: total,
                 eligible_tokens,
@@ -500,4 +547,27 @@ pub async fn analyze_session_exact(
         pairs,
         per_student,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::eligible_coverage;
+    use provenance_match::union_len;
+
+    #[test]
+    fn combined_coverage_unions_evidence_types_instead_of_adding_them() {
+        let exact = [(1, 5), (10, 14)];
+        let modified = [(3, 7), (8, 12)];
+        let exact_pct = eligible_coverage(&exact, 20).expect("eligible exact coverage");
+        let modified_pct = eligible_coverage(&modified, 20).expect("eligible modified coverage");
+        let mut combined = exact.to_vec();
+        combined.extend(modified);
+        let combined_pct = eligible_coverage(&combined, 20).expect("eligible combined coverage");
+
+        assert_eq!(exact_pct, 40.0);
+        assert_eq!(modified_pct, 40.0);
+        assert_eq!(combined_pct, union_len(&combined) as f64 / 20.0 * 100.0);
+        assert_eq!(combined_pct, 60.0);
+        assert!(combined_pct < exact_pct + modified_pct);
+    }
 }

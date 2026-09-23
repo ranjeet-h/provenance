@@ -10,6 +10,8 @@
       "b_student_id": "stud-chen",
       "coverage_a": 29.268292682926827,
       "coverage_b": 54.54545454545454,
+      "exact_coverage_a": 29.268292682926827,
+      "exact_coverage_b": 54.54545454545454,
       "excluded": [
         {
           "char_end": 65,
@@ -30,6 +32,8 @@
           "tokens": 12
         }
       ],
+      "modified_coverage_a": 0.0,
+      "modified_coverage_b": 0.0,
       "passages": [
         {
           "a_char_end": 129,
@@ -52,6 +56,8 @@
       "b_student_id": "stud-priya",
       "coverage_a": 53.65853658536586,
       "coverage_b": 84.61538461538461,
+      "exact_coverage_a": 53.65853658536586,
+      "exact_coverage_b": 84.61538461538461,
       "excluded": [
         {
           "char_end": 65,
@@ -72,6 +78,8 @@
           "tokens": 12
         }
       ],
+      "modified_coverage_a": 0.0,
+      "modified_coverage_b": 0.0,
       "passages": [
         {
           "a_char_end": 206,
@@ -94,6 +102,8 @@
       "b_student_id": "stud-sara",
       "coverage_a": 78.04878048780488,
       "coverage_b": 100.0,
+      "exact_coverage_a": 29.268292682926827,
+      "exact_coverage_b": 40.0,
       "excluded": [
         {
           "char_end": 65,
@@ -114,6 +124,8 @@
           "tokens": 12
         }
       ],
+      "modified_coverage_a": 48.78048780487805,
+      "modified_coverage_b": 60.0,
       "passages": [
         {
           "a_char_end": 129,
@@ -150,6 +162,8 @@
       "b_student_id": "stud-priya",
       "coverage_a": 54.54545454545454,
       "coverage_b": 46.15384615384615,
+      "exact_coverage_a": 54.54545454545454,
+      "exact_coverage_b": 46.15384615384615,
       "excluded": [
         {
           "char_end": 65,
@@ -170,6 +184,8 @@
           "tokens": 12
         }
       ],
+      "modified_coverage_a": 0.0,
+      "modified_coverage_b": 0.0,
       "passages": [
         {
           "a_char_end": 129,
@@ -192,6 +208,8 @@
       "b_student_id": "stud-sara",
       "coverage_a": 54.54545454545454,
       "coverage_b": 40.0,
+      "exact_coverage_a": 54.54545454545454,
+      "exact_coverage_b": 40.0,
       "excluded": [
         {
           "char_end": 65,
@@ -212,6 +230,8 @@
           "tokens": 12
         }
       ],
+      "modified_coverage_a": 0.0,
+      "modified_coverage_b": 0.0,
       "passages": [
         {
           "a_char_end": 129,
@@ -234,6 +254,8 @@
       "b_student_id": "stud-sara",
       "coverage_a": 46.15384615384615,
       "coverage_b": 40.0,
+      "exact_coverage_a": 46.15384615384615,
+      "exact_coverage_b": 40.0,
       "excluded": [
         {
           "char_end": 65,
@@ -254,6 +276,8 @@
           "tokens": 12
         }
       ],
+      "modified_coverage_a": 0.0,
+      "modified_coverage_b": 0.0,
       "passages": [
         {
           "a_char_end": 129,
@@ -276,28 +300,36 @@
     {
       "coverage": 100.0,
       "eligible_tokens": 41,
+      "exact_coverage": 53.65853658536586,
       "matched_tokens": 41,
+      "modified_coverage": 48.78048780487805,
       "student_id": "stud-amit",
       "total_tokens": 53
     },
     {
       "coverage": 54.54545454545454,
       "eligible_tokens": 22,
+      "exact_coverage": 54.54545454545454,
       "matched_tokens": 12,
+      "modified_coverage": 0.0,
       "student_id": "stud-chen",
       "total_tokens": 34
     },
     {
       "coverage": 84.61538461538461,
       "eligible_tokens": 26,
+      "exact_coverage": 84.61538461538461,
       "matched_tokens": 22,
+      "modified_coverage": 0.0,
       "student_id": "stud-priya",
       "total_tokens": 38
     },
     {
       "coverage": 100.0,
       "eligible_tokens": 30,
+      "exact_coverage": 40.0,
       "matched_tokens": 30,
+      "modified_coverage": 60.0,
       "student_id": "stud-sara",
       "total_tokens": 42
     }

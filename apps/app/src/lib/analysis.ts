@@ -48,6 +48,10 @@ export const PairAnalysisSchema = z.object({
   b_student_id: z.string(),
   coverage_a: z.number().nullable(),
   coverage_b: z.number().nullable(),
+  exact_coverage_a: z.number().nullable(),
+  exact_coverage_b: z.number().nullable(),
+  modified_coverage_a: z.number().nullable(),
+  modified_coverage_b: z.number().nullable(),
   passages: z.array(PassageSchema),
   excluded: z.array(ExcludedEvidenceSchema),
 });
@@ -57,6 +61,8 @@ export type PairAnalysis = z.infer<typeof PairAnalysisSchema>;
 export const StudentCoverageSchema = z.object({
   student_id: z.string(),
   coverage: z.number().nullable(),
+  exact_coverage: z.number().nullable(),
+  modified_coverage: z.number().nullable(),
   matched_tokens: z.number(),
   total_tokens: z.number(),
   eligible_tokens: z.number(),
@@ -99,4 +105,17 @@ export function cellCoverage(
   if (pair.a_student_id === rowId) return pair.coverage_a;
   if (pair.b_student_id === rowId) return pair.coverage_b;
   return null;
+}
+
+/** Per-kind directional coverage; each type is a subset of the combined union. */
+export function cellCoverageByKind(
+  pair: PairAnalysis,
+  rowId: string,
+  kind: "exact" | "modified",
+): number | null {
+  if (pair.a_student_id !== rowId && pair.b_student_id !== rowId) return null;
+  const side = pair.a_student_id === rowId ? "a" : "b";
+  return kind === "exact"
+    ? pair[`exact_coverage_${side}`]
+    : pair[`modified_coverage_${side}`];
 }

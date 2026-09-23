@@ -43,3 +43,13 @@ The integration fixture suite covers:
 - Image inputs remain outside the product contract. The root-level decision
   record explains the boundary and the only allowed future reconsideration
   path.
+
+## Implemented phases awaiting user acceptance
+
+These entries record implementation and automated evidence only. They are
+not approved phases: the user still needs to perform the corresponding manual
+test and explicitly approve them.
+
+| Phase | Implementation evidence | Manual test / approval |
+|---|---|---|
+| 15 — Evidence merge and final coverage scoring | Exact/modified directional and per-student breakdowns; unique-span combined coverage; Rust engine and frontend contract tests | Pending user test |

@@ -469,6 +469,10 @@ export function fakeAnalyze(db: FakeDb, sessionId: string) {
       b_student_id: p.b_student_id,
       coverage_a: eligibleA === 0 ? null : (unionLen(aRanges) / eligibleA) * 100,
       coverage_b: eligibleB === 0 ? null : (unionLen(bRanges) / eligibleB) * 100,
+      exact_coverage_a: eligibleA === 0 ? null : (unionLen(aRanges) / eligibleA) * 100,
+      exact_coverage_b: eligibleB === 0 ? null : (unionLen(bRanges) / eligibleB) * 100,
+      modified_coverage_a: eligibleA === 0 ? null : 0,
+      modified_coverage_b: eligibleB === 0 ? null : 0,
       passages: p.passages,
       excluded: p.excluded,
     };
@@ -481,6 +485,8 @@ export function fakeAnalyze(db: FakeDb, sessionId: string) {
     return {
       student_id: st.id,
       coverage: eligible === 0 ? null : (matched / eligible) * 100,
+      exact_coverage: eligible === 0 ? null : (matched / eligible) * 100,
+      modified_coverage: eligible === 0 ? null : 0,
       matched_tokens: matched,
       total_tokens: total,
       eligible_tokens: eligible,
