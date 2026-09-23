@@ -19,7 +19,7 @@ Keep the terminal open and wait for the desktop app to finish launching.
 3. For Ada, use **Upload file** and select `manual-test-pack/current/student-ada.txt`.
 4. For Ben, upload `manual-test-pack/current/student-ben.md`.
 5. For Cara, upload `manual-test-pack/current/student-cara.txt`.
-6. If the session has an assignment-prompt field, paste in `manual-test-pack/current/assignment-prompt.txt`.
+6. In **Session settings**, paste `manual-test-pack/current/assignment-prompt.txt` into **Assignment question / instructions** and choose **Save settings**.
 7. Choose **Analyze session**.
 
 Review the pairwise evidence and the per-student details:
@@ -43,7 +43,7 @@ This separate session checks that the same selectable text survives pasted text,
 
 ## 4. Exercise local reference-library export/import
 
-1. In the analyzed session, use **Archive this session** and name it `Manual Test Library`. At least two non-empty submissions and a saved analysis are required.
+1. Return to `Manual overlap test` and use **Archive this session** to create `Manual Test Library`. This is the intended comparison source for the self-check fixture. At least two non-empty submissions and a saved analysis are required.
 2. Open **Reference Libraries** and choose **Export .plagpack** for `Manual Test Library`. Keep track of where the downloaded file was saved.
 3. To test importing rather than keeping two copies, delete `Manual Test Library` from the app and confirm the deletion. This only deletes the local library entry; it does not delete the original session or the downloaded pack.
 4. Choose **Import archive** and select the `.plagpack` file you just exported. Confirm that the imported library appears and its submission count is populated when opened.
