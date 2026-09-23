@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use provenance_core::analysis::{self, AnalysisProgress, AnalysisStage, ExactAnalysis};
 use provenance_core::domain::{
-    NewSession, NewStudent, Session, SessionUpdate, SourceType, Student, Submission,
+    NewSession, NewStudent, ReferenceLibrary, ReferenceSubmission, Session, SessionUpdate,
+    SourceType, Student, Submission,
 };
 use provenance_core::error::CoreError;
 use provenance_core::import::FileIngestResult;
@@ -158,6 +159,64 @@ async fn list_submissions(
     session_id: String,
 ) -> Result<Vec<Submission>, CommandError> {
     service::list_submissions(&db.0, &session_id)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn archive_completed_session(
+    db: State<'_, DbState>,
+    session_id: String,
+    library_name: String,
+) -> Result<ReferenceLibrary, CommandError> {
+    service::archive_completed_session(&db.0, &session_id, &library_name)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn list_reference_libraries(
+    db: State<'_, DbState>,
+) -> Result<Vec<ReferenceLibrary>, CommandError> {
+    service::list_reference_libraries(&db.0)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn list_reference_submissions(
+    db: State<'_, DbState>,
+    library_id: String,
+) -> Result<Vec<ReferenceSubmission>, CommandError> {
+    service::list_reference_submissions(&db.0, &library_id)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn selected_reference_library_ids(
+    db: State<'_, DbState>,
+    session_id: String,
+) -> Result<Vec<String>, CommandError> {
+    service::selected_reference_library_ids(&db.0, &session_id)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn set_session_reference_libraries(
+    db: State<'_, DbState>,
+    session_id: String,
+    library_ids: Vec<String>,
+) -> Result<Vec<String>, CommandError> {
+    service::set_session_reference_libraries(&db.0, &session_id, library_ids)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn delete_reference_library(db: State<'_, DbState>, id: String) -> Result<(), CommandError> {
+    service::delete_reference_library(&db.0, &id)
         .await
         .map_err(CommandError::from)
 }
@@ -361,6 +420,12 @@ pub fn run() {
             save_file_submission,
             analyze_session,
             get_session_analysis,
+            archive_completed_session,
+            list_reference_libraries,
+            list_reference_submissions,
+            selected_reference_library_ids,
+            set_session_reference_libraries,
+            delete_reference_library,
             inspect_text
         ])
         .run(tauri::generate_context!())

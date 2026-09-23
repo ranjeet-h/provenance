@@ -317,6 +317,32 @@ pub struct Submission {
     pub updated_at: String,
 }
 
+/// A completed session snapshot used as immutable comparison material.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferenceLibrary {
+    pub id: String,
+    pub name: String,
+    pub source_session_id: String,
+    pub source_session_name: String,
+    pub created_at: String,
+    pub fingerprint_version: u32,
+    pub normalization_version: u32,
+    pub modified_version: u32,
+}
+
+/// An anonymization-ready, read-only document captured in a reference library.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferenceSubmission {
+    pub id: String,
+    pub library_id: String,
+    pub source_label: String,
+    pub source_filename: Option<String>,
+    pub source_type: SourceType,
+    pub original_text: String,
+    pub content_sha256: String,
+    pub created_at: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

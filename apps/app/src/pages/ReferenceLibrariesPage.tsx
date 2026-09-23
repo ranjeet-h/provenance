@@ -1,17 +1,131 @@
+import * as React from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/common/PageHeader";
 import { EmptyState } from "@/components/common/EmptyState";
+import { LoadingState } from "@/components/common/LoadingState";
+import { ErrorState } from "@/components/common/ErrorState";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { Button } from "@/components/ui/button";
+import {
+  deleteReferenceLibrary,
+  listReferenceLibraries,
+  listReferenceSubmissions,
+} from "@/lib/referenceLibraries";
+import { asSessionsError } from "@/lib/sessions";
 
 export function ReferenceLibrariesPage() {
+  const queryClient = useQueryClient();
+  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const librariesQuery = useQuery({
+    queryKey: ["reference-libraries"],
+    queryFn: listReferenceLibraries,
+    retry: false,
+  });
+  const submissionsQuery = useQuery({
+    queryKey: ["reference-library-submissions", selectedId],
+    queryFn: () => listReferenceSubmissions(selectedId ?? ""),
+    enabled: selectedId !== null,
+    retry: false,
+  });
+
+  async function onDelete(id: string): Promise<void> {
+    setError(null);
+    try {
+      await deleteReferenceLibrary(id);
+      if (selectedId === id) setSelectedId(null);
+      await queryClient.invalidateQueries({ queryKey: ["reference-libraries"] });
+      queryClient.setQueriesData({ queryKey: ["analysis"] }, null);
+      await queryClient.invalidateQueries({ queryKey: ["analysis"] });
+    } catch (cause) {
+      setError(asSessionsError(cause).message);
+    }
+  }
+
   return (
     <div>
       <PageHeader
         title="Reference Libraries"
-        description="Read-only historical comparison material. Archiving and .plagpack arrive in Phases 17–18."
+        description="Read-only snapshots of analyzed sessions for separate historical comparisons."
       />
-      <EmptyState
-        title="No reference libraries yet"
-        description="Archive a completed session here later, or import a .plagpack shared by another teacher."
-      />
+      {error ? <p role="alert" className="mb-3 text-sm text-destructive">{error}</p> : null}
+      {librariesQuery.isPending ? (
+        <LoadingState label="Loading reference libraries…" />
+      ) : librariesQuery.isError ? (
+        <ErrorState
+          title="Could not load reference libraries"
+          message={asSessionsError(librariesQuery.error).message}
+          onRetry={() => void librariesQuery.refetch()}
+        />
+      ) : librariesQuery.data.length === 0 ? (
+        <EmptyState
+          title="No reference libraries yet"
+          description="Run an analysis in a completed session, then archive it from that session to create a historical library."
+        />
+      ) : (
+        <div className="space-y-4">
+          <ul aria-label="Reference library list" className="divide-y rounded-lg border">
+            {librariesQuery.data.map((library) => (
+              <li key={library.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+                <div>
+                  <h2 className="font-medium">{library.name}</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Archived from {library.source_session_name} · {new Date(library.created_at).toLocaleDateString()}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Matching versions: fingerprints {library.fingerprint_version}, normalization {library.normalization_version}, modified {library.modified_version}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-expanded={selectedId === library.id}
+                    onClick={() => setSelectedId(selectedId === library.id ? null : library.id)}
+                  >
+                    {selectedId === library.id ? "Hide sources" : "View sources"}
+                  </Button>
+                  <ConfirmDialog
+                    title={`Remove ${library.name}?`}
+                    description="This deletes the archived snapshot and removes it from every session's selected comparison libraries."
+                    confirmLabel="Remove library"
+                    onConfirm={() => void onDelete(library.id)}
+                    trigger={<Button size="sm" variant="destructive">Remove</Button>}
+                  />
+                </div>
+                {selectedId === library.id ? (
+                  <div className="basis-full">
+                    {submissionsQuery.isPending ? (
+                      <LoadingState label="Loading archived submissions…" />
+                    ) : submissionsQuery.isError ? (
+                      <ErrorState
+                        title="Could not load archived submissions"
+                        message={asSessionsError(submissionsQuery.error).message}
+                        onRetry={() => void submissionsQuery.refetch()}
+                      />
+                    ) : (
+                      <ul aria-label="Archived submissions" className="mt-2 divide-y rounded-md border">
+                        {submissionsQuery.data.map((submission) => (
+                          <li key={submission.id} className="p-3">
+                            <p className="text-sm font-medium">
+                              {submission.source_label}
+                              {submission.source_filename ? ` · ${submission.source_filename}` : ""}
+                            </p>
+                            <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">
+                              {submission.original_text.slice(0, 500)}
+                              {submission.original_text.length > 500 ? "…" : ""}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

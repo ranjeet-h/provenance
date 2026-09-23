@@ -10,6 +10,7 @@ import {
   analyzeSession,
   cellCoverage,
   cellCoverageByKind,
+  type HistoricalPairAnalysis,
   exclusionLabel,
   loadSessionAnalysis,
   type AnalysisProgress,
@@ -226,6 +227,41 @@ export function AnalysisSection({
             </ul>
           </div>
 
+          {report.compared_libraries.length > 0 ? (
+            <section aria-label="Historical reference comparisons">
+              <Separator className="my-4" />
+              <h3 className="text-sm font-medium">Historical reference comparisons</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Historical evidence is shown separately and is not included in
+                current-student pair scores.
+              </p>
+              <ul className="mt-2 space-y-1 text-sm">
+                {report.compared_libraries.map((library) => (
+                  <li key={library.id}>
+                    {library.name} · {library.source_count} historical submissions
+                    <span className="text-muted-foreground"> · from {library.source_session_name}</span>
+                  </li>
+                ))}
+              </ul>
+              {report.historical_matches.length === 0 ? (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  No matching passages were found in the selected historical libraries.
+                </p>
+              ) : (
+                <ol className="mt-3 space-y-4">
+                  {report.historical_matches.map((match) => (
+                    <HistoricalMatchCard
+                      key={`${match.student_id}:${match.reference_submission_id}`}
+                      match={match}
+                      studentName={nameById.get(match.student_id) ?? "Unknown student"}
+                      studentText={textByStudent.get(match.student_id) ?? ""}
+                    />
+                  ))}
+                </ol>
+              )}
+            </section>
+          ) : null}
+
           {selectedPair ? (
             <div aria-label="Pair detail">
               <Separator className="my-4" />
@@ -305,12 +341,50 @@ export function AnalysisSection({
   );
 }
 
+function HistoricalMatchCard({
+  match,
+  studentName,
+  studentText,
+}: {
+  match: HistoricalPairAnalysis;
+  studentName: string;
+  studentText: string;
+}) {
+  return (
+    <li className="rounded-lg border p-4">
+      <h4 className="text-sm font-medium">
+        {studentName} · {match.library_name} · {match.reference_label}
+      </h4>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Historical source from {match.reference_filename ?? "an archived submission"} · current-text coverage {formatOptionalPct(match.coverage_current)}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Exact {formatOptionalPct(match.exact_coverage_current)} · Modified {formatOptionalPct(match.modified_coverage_current)}
+      </p>
+      <ol className="mt-3 space-y-3">
+        {match.passages.map((passage, index) => (
+          <PassageCard
+            key={`${passage.a_token_start}-${passage.b_token_start}-${index}`}
+            index={index}
+            passage={passage}
+            aName={studentName}
+            bName={`${match.library_name} · ${match.reference_label}`}
+            aText={studentText}
+            bText={match.reference_text}
+          />
+        ))}
+      </ol>
+    </li>
+  );
+}
+
 const PROGRESS_LABELS: Record<AnalysisProgress["stage"], string> = {
   preparing: "Preparing submissions",
   exact: "Finding exact matches",
   modified: "Finding modified matches",
   aligning: "Aligning evidence",
   scoring: "Scoring unique matched spans",
+  historical: "Comparing selected reference libraries",
   saving: "Saving analysis",
   complete: "Analysis complete",
   failed: "Analysis failed",

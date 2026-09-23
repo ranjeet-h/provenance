@@ -52,7 +52,8 @@ fn migration_is_idempotent_and_tables_exist() {
         sqlx::query_scalar(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN
              ('sessions', 'students', 'submissions', 'schema_version',
-              'analysis_results', 'raw_pair_analyses') ORDER BY name",
+              'analysis_results', 'raw_pair_analyses', 'reference_libraries',
+              'reference_submissions', 'session_reference_libraries') ORDER BY name",
         )
         .fetch_all(&pool),
     )
@@ -62,7 +63,10 @@ fn migration_is_idempotent_and_tables_exist() {
         vec![
             "analysis_results",
             "raw_pair_analyses",
+            "reference_libraries",
+            "reference_submissions",
             "schema_version",
+            "session_reference_libraries",
             "sessions",
             "students",
             "submissions"

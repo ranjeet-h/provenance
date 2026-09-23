@@ -14,6 +14,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import {
+  archiveCompletedSession,
+  listReferenceLibraries,
+  selectedReferenceLibraryIds,
+  setSessionReferenceLibraries,
+} from "@/lib/referenceLibraries";
+import {
   addStudent,
   asSessionsError,
   deleteSession,
@@ -168,7 +174,134 @@ function SessionSettingsForm({ session }: { session: Session }) {
   );
 }
 
-export function SessionDetailPage() {  const { sessionId } = useParams({ strict: false }) as { sessionId?: string };
+function SessionReferenceLibraries({ sessionId }: { sessionId: string }) {
+  const queryClient = useQueryClient();
+  const [saving, setSaving] = React.useState(false);
+  const [message, setMessage] = React.useState<string | null>(null);
+  const librariesQuery = useQuery({
+    queryKey: ["reference-libraries"],
+    queryFn: listReferenceLibraries,
+    retry: false,
+  });
+  const selectedQuery = useQuery({
+    queryKey: ["selected-reference-library-ids", sessionId],
+    queryFn: () => selectedReferenceLibraryIds(sessionId),
+    retry: false,
+  });
+  const selected = selectedQuery.data ?? [];
+
+  async function onToggle(libraryId: string, checked: boolean): Promise<void> {
+    setSaving(true);
+    setMessage(null);
+    const next = checked
+      ? [...selected, libraryId]
+      : selected.filter((id) => id !== libraryId);
+    try {
+      const saved = await setSessionReferenceLibraries(sessionId, next);
+      queryClient.setQueryData(["selected-reference-library-ids", sessionId], saved);
+      await invalidateAnalysisReport(queryClient, sessionId);
+      setMessage("Comparison libraries saved. Run analysis again to include them.");
+    } catch (cause) {
+      setMessage(asSessionsError(cause).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section aria-label="Historical comparison libraries" className="mt-4 rounded-lg border p-4">
+      <h2 className="text-sm font-medium">Historical comparison libraries</h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Selected archives are compared independently; historical matches never
+        affect current-student scores.
+      </p>
+      {librariesQuery.isPending || selectedQuery.isPending ? (
+        <div className="mt-3"><LoadingState label="Loading historical libraries…" /></div>
+      ) : librariesQuery.isError || selectedQuery.isError ? (
+        <p role="alert" className="mt-2 text-sm text-destructive">
+          {asSessionsError(librariesQuery.error ?? selectedQuery.error).message}
+        </p>
+      ) : librariesQuery.data.length === 0 ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          No archives yet. After a session has a current saved analysis, you can archive it from below.
+        </p>
+      ) : (
+        <ul className="mt-3 space-y-2">
+          {librariesQuery.data.map((library) => (
+            <li key={library.id}>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(library.id)}
+                  disabled={saving}
+                  onChange={(event) => void onToggle(library.id, event.currentTarget.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-input"
+                />
+                <span>
+                  {library.name}
+                  <span className="block text-xs text-muted-foreground">
+                    Archived from {library.source_session_name}
+                  </span>
+                </span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+      {message ? <p role="status" className="mt-2 text-xs text-muted-foreground">{message}</p> : null}
+    </section>
+  );
+}
+
+function ArchiveSessionForm({ session }: { session: Session }) {
+  const queryClient = useQueryClient();
+  const [name, setName] = React.useState(session.name);
+  const [message, setMessage] = React.useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [saving, setSaving] = React.useState(false);
+
+  async function onArchive(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    setSaving(true);
+    setMessage(null);
+    try {
+      const library = await archiveCompletedSession(session.id, name);
+      await queryClient.invalidateQueries({ queryKey: ["reference-libraries"] });
+      setMessage({ kind: "ok", text: `Archived as “${library.name}”.` });
+    } catch (cause) {
+      setMessage({ kind: "error", text: asSessionsError(cause).message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section aria-label="Archive session as reference library" className="mt-4 rounded-lg border p-4">
+      <h2 className="text-sm font-medium">Archive this session</h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Creates a read-only text snapshot. A current saved analysis and at least
+        two non-empty student submissions are required.
+      </p>
+      <form className="mt-3 flex max-w-md gap-2" onSubmit={(event) => void onArchive(event)}>
+        <Input
+          aria-label="Reference library name"
+          value={name}
+          onChange={(event) => setName(event.currentTarget.value)}
+        />
+        <Button type="submit" variant="outline" disabled={saving}>
+          {saving ? "Archiving…" : "Archive session"}
+        </Button>
+      </form>
+      {message ? (
+        <p role={message.kind === "error" ? "alert" : "status"} className="mt-2 text-sm text-muted-foreground">
+          {message.text}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+export function SessionDetailPage() {
+  const { sessionId } = useParams({ strict: false }) as { sessionId?: string };
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [studentName, setStudentName] = React.useState("");
@@ -271,6 +404,8 @@ export function SessionDetailPage() {  const { sessionId } = useParams({ strict:
       <RenameSessionForm key={session.id} session={session} />
 
       <SessionSettingsForm key={`settings-${session.id}`} session={session} />
+      <SessionReferenceLibraries sessionId={session.id} />
+      <ArchiveSessionForm session={session} />
 
       <section aria-label="Students" className="mt-6">
         <h2 className="text-lg font-medium">Students</h2>

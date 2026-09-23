@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ReferenceLibrariesPage } from "./ReferenceLibrariesPage";
 import { SettingsPage } from "./SettingsPage";
 import { resetInvokeImpl, setInvokeImpl } from "../lib/tauri";
 import {
@@ -101,12 +100,12 @@ describe("SessionDetailPage", () => {
 });
 
 describe("ReferenceLibrariesPage", () => {
-  it("shows the historical empty state", () => {
-    render(<ReferenceLibrariesPage />);
+  it("shows the historical empty state", async () => {
+    renderAt("/reference-libraries");
     expect(
-      screen.getByRole("heading", { name: /^reference libraries$/i }),
+      await screen.findByRole("heading", { name: /^reference libraries$/i }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/import a \.plagpack/i)).toBeInTheDocument();
+    expect(await screen.findByText(/run an analysis in a completed session/i)).toBeInTheDocument();
   });
 });
 

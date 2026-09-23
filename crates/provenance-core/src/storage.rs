@@ -7,13 +7,13 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 
 use crate::domain::{
-    new_id, now_iso, Session, SessionStatus, SourceType, Student, Submission, SubmissionStatus,
-    ValidatedNewSession,
+    new_id, now_iso, ReferenceLibrary, ReferenceSubmission, Session, SessionStatus, SourceType,
+    Student, Submission, SubmissionStatus, ValidatedNewSession,
 };
 use crate::error::CoreError;
 
 /// Current schema version. Bump with a new `MIGRATION_Vn` block.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 const MIGRATION_V1: &str = "
 CREATE TABLE IF NOT EXISTS sessions (
@@ -81,6 +81,38 @@ CREATE TABLE raw_pair_analyses (
 CREATE INDEX idx_raw_pair_analyses_session ON raw_pair_analyses (session_id);
 ";
 
+/// Phase 17: immutable historical snapshots and per-session corpus selection.
+const MIGRATION_V5: &str = "
+CREATE TABLE reference_libraries (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+  source_session_id TEXT NOT NULL,
+  source_session_name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  fingerprint_version INTEGER NOT NULL,
+  normalization_version INTEGER NOT NULL,
+  modified_version INTEGER NOT NULL
+);
+CREATE INDEX idx_reference_libraries_created ON reference_libraries (created_at);
+CREATE TABLE reference_submissions (
+  id TEXT PRIMARY KEY,
+  library_id TEXT NOT NULL REFERENCES reference_libraries (id) ON DELETE CASCADE,
+  source_label TEXT NOT NULL,
+  source_filename TEXT NULL,
+  source_type TEXT NOT NULL,
+  original_text TEXT NOT NULL,
+  content_sha256 TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_reference_submissions_library ON reference_submissions (library_id);
+CREATE TABLE session_reference_libraries (
+  session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+  library_id TEXT NOT NULL REFERENCES reference_libraries (id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (session_id, library_id)
+);
+";
+
 async fn apply_migration(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     migration: &str,
@@ -142,6 +174,9 @@ pub async fn migrate(pool: &SqlitePool) -> Result<(), CoreError> {
     if current < 4 {
         // Phase 16: persist raw matching evidence separately from scored reports.
         apply_migration(&mut tx, MIGRATION_V4, 4).await?;
+    }
+    if current < 5 {
+        apply_migration(&mut tx, MIGRATION_V5, 5).await?;
     }
     tx.commit().await.map_err(CoreError::Database)?;
     Ok(())
@@ -601,6 +636,243 @@ impl AnalysisRepo {
         .execute(pool)
         .await
         .map_err(CoreError::Database)?;
+        Ok(())
+    }
+}
+
+fn map_row_to_reference_library(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<ReferenceLibrary, CoreError> {
+    Ok(ReferenceLibrary {
+        id: row.try_get("id").map_err(CoreError::Database)?,
+        name: row.try_get("name").map_err(CoreError::Database)?,
+        source_session_id: row
+            .try_get("source_session_id")
+            .map_err(CoreError::Database)?,
+        source_session_name: row
+            .try_get("source_session_name")
+            .map_err(CoreError::Database)?,
+        created_at: row.try_get("created_at").map_err(CoreError::Database)?,
+        fingerprint_version: row
+            .try_get::<i64, _>("fingerprint_version")
+            .map_err(CoreError::Database)? as u32,
+        normalization_version: row
+            .try_get::<i64, _>("normalization_version")
+            .map_err(CoreError::Database)? as u32,
+        modified_version: row
+            .try_get::<i64, _>("modified_version")
+            .map_err(CoreError::Database)? as u32,
+    })
+}
+
+fn map_row_to_reference_submission(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<ReferenceSubmission, CoreError> {
+    let source_raw: String = row.try_get("source_type").map_err(CoreError::Database)?;
+    Ok(ReferenceSubmission {
+        id: row.try_get("id").map_err(CoreError::Database)?,
+        library_id: row.try_get("library_id").map_err(CoreError::Database)?,
+        source_label: row.try_get("source_label").map_err(CoreError::Database)?,
+        source_filename: row
+            .try_get("source_filename")
+            .map_err(CoreError::Database)?,
+        source_type: SourceType::parse(&source_raw)?,
+        original_text: row.try_get("original_text").map_err(CoreError::Database)?,
+        content_sha256: row.try_get("content_sha256").map_err(CoreError::Database)?,
+        created_at: row.try_get("created_at").map_err(CoreError::Database)?,
+    })
+}
+
+/// Reference library snapshots are immutable through the repository API.
+pub struct ReferenceLibraryRepo;
+
+impl ReferenceLibraryRepo {
+    #[allow(clippy::too_many_arguments)]
+    pub async fn snapshot_session(
+        pool: &SqlitePool,
+        name: &str,
+        source_session_id: &str,
+        source_session_name: &str,
+        fingerprint_version: u32,
+        normalization_version: u32,
+        modified_version: u32,
+    ) -> Result<ReferenceLibrary, CoreError> {
+        let mut tx = pool.begin().await.map_err(CoreError::Database)?;
+        let id = new_id();
+        let created_at = now_iso();
+        sqlx::query(
+            "INSERT INTO reference_libraries
+             (id, name, source_session_id, source_session_name, created_at,
+              fingerprint_version, normalization_version, modified_version)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(name)
+        .bind(source_session_id)
+        .bind(source_session_name)
+        .bind(&created_at)
+        .bind(i64::from(fingerprint_version))
+        .bind(i64::from(normalization_version))
+        .bind(i64::from(modified_version))
+        .execute(&mut *tx)
+        .await
+        .map_err(CoreError::Database)?;
+        sqlx::query(
+            "INSERT INTO reference_submissions
+             (id, library_id, source_label, source_filename, source_type,
+              original_text, content_sha256, created_at)
+             SELECT lower(hex(randomblob(16))), ?, st.display_name, s.source_filename,
+                    s.source_type, s.original_text, s.content_sha256, s.created_at
+             FROM submissions s
+             JOIN students st ON st.id = s.student_id
+             WHERE s.session_id = ? AND length(trim(s.original_text)) > 0
+             ORDER BY st.rowid ASC",
+        )
+        .bind(&id)
+        .bind(source_session_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(CoreError::Database)?;
+        tx.commit().await.map_err(CoreError::Database)?;
+        Ok(ReferenceLibrary {
+            id,
+            name: name.to_string(),
+            source_session_id: source_session_id.to_string(),
+            source_session_name: source_session_name.to_string(),
+            created_at,
+            fingerprint_version,
+            normalization_version,
+            modified_version,
+        })
+    }
+
+    pub async fn list(pool: &SqlitePool) -> Result<Vec<ReferenceLibrary>, CoreError> {
+        let rows =
+            sqlx::query("SELECT * FROM reference_libraries ORDER BY created_at DESC, rowid DESC")
+                .fetch_all(pool)
+                .await
+                .map_err(CoreError::Database)?;
+        rows.iter().map(map_row_to_reference_library).collect()
+    }
+
+    pub async fn get(pool: &SqlitePool, id: &str) -> Result<ReferenceLibrary, CoreError> {
+        let row = sqlx::query("SELECT * FROM reference_libraries WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => CoreError::not_found("reference library not found"),
+                other => CoreError::Database(other),
+            })?;
+        map_row_to_reference_library(&row)
+    }
+
+    pub async fn submissions(
+        pool: &SqlitePool,
+        library_id: &str,
+    ) -> Result<Vec<ReferenceSubmission>, CoreError> {
+        Self::get(pool, library_id).await?;
+        let rows = sqlx::query(
+            "SELECT * FROM reference_submissions WHERE library_id = ? ORDER BY rowid ASC",
+        )
+        .bind(library_id)
+        .fetch_all(pool)
+        .await
+        .map_err(CoreError::Database)?;
+        rows.iter().map(map_row_to_reference_submission).collect()
+    }
+
+    pub async fn selected_ids(
+        pool: &SqlitePool,
+        session_id: &str,
+    ) -> Result<Vec<String>, CoreError> {
+        let rows = sqlx::query_scalar(
+            "SELECT library_id FROM session_reference_libraries
+             WHERE session_id = ? ORDER BY library_id",
+        )
+        .bind(session_id)
+        .fetch_all(pool)
+        .await
+        .map_err(CoreError::Database)?;
+        Ok(rows)
+    }
+
+    pub async fn selected_submissions(
+        pool: &SqlitePool,
+        session_id: &str,
+    ) -> Result<Vec<(ReferenceLibrary, ReferenceSubmission)>, CoreError> {
+        let rows = sqlx::query(
+            "SELECT l.*, r.id AS ref_id, r.library_id AS ref_library_id,
+                    r.source_label, r.source_filename, r.source_type,
+                    r.original_text, r.content_sha256, r.created_at AS ref_created_at
+             FROM session_reference_libraries selected
+             JOIN reference_libraries l ON l.id = selected.library_id
+             JOIN reference_submissions r ON r.library_id = l.id
+             WHERE selected.session_id = ?
+             ORDER BY l.created_at, r.rowid",
+        )
+        .bind(session_id)
+        .fetch_all(pool)
+        .await
+        .map_err(CoreError::Database)?;
+        rows.iter()
+            .map(|row| {
+                let library = map_row_to_reference_library(row)?;
+                let submission = ReferenceSubmission {
+                    id: row.try_get("ref_id").map_err(CoreError::Database)?,
+                    library_id: row.try_get("ref_library_id").map_err(CoreError::Database)?,
+                    source_label: row.try_get("source_label").map_err(CoreError::Database)?,
+                    source_filename: row
+                        .try_get("source_filename")
+                        .map_err(CoreError::Database)?,
+                    source_type: SourceType::parse(
+                        &row.try_get::<String, _>("source_type")
+                            .map_err(CoreError::Database)?,
+                    )?,
+                    original_text: row.try_get("original_text").map_err(CoreError::Database)?,
+                    content_sha256: row.try_get("content_sha256").map_err(CoreError::Database)?,
+                    created_at: row.try_get("ref_created_at").map_err(CoreError::Database)?,
+                };
+                Ok((library, submission))
+            })
+            .collect()
+    }
+
+    pub async fn replace_selection(
+        pool: &SqlitePool,
+        session_id: &str,
+        library_ids: &[String],
+    ) -> Result<(), CoreError> {
+        let mut tx = pool.begin().await.map_err(CoreError::Database)?;
+        sqlx::query("DELETE FROM session_reference_libraries WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(CoreError::Database)?;
+        for library_id in library_ids {
+            sqlx::query(
+                "INSERT INTO session_reference_libraries (session_id, library_id, created_at)
+                 VALUES (?, ?, ?)",
+            )
+            .bind(session_id)
+            .bind(library_id)
+            .bind(now_iso())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| map_fk_error(e, "session or reference library"))?;
+        }
+        tx.commit().await.map_err(CoreError::Database)
+    }
+
+    pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), CoreError> {
+        let result = sqlx::query("DELETE FROM reference_libraries WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await
+            .map_err(CoreError::Database)?;
+        if result.rows_affected() == 0 {
+            return Err(CoreError::not_found("reference library not found"));
+        }
         Ok(())
     }
 }

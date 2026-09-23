@@ -5,11 +5,15 @@ import { createAppRouter } from "./router";
 import type { InvokeFn } from "./lib/tauri";
 import { MAX_UPLOAD_BYTES } from "./lib/sessions";
 import type { Session, Student, Submission } from "./lib/sessions";
+import type { ReferenceLibrary, ReferenceSubmission } from "./lib/referenceLibraries";
 
 interface FakeDb {
   sessions: Session[];
   students: Student[];
   submissions: Submission[];
+  referenceLibraries: ReferenceLibrary[];
+  referenceSubmissions: ReferenceSubmission[];
+  selectedReferenceLibraries: Record<string, string[]>;
 }
 
 function now(): string {
@@ -25,6 +29,11 @@ export function createFakeSessions(seed?: Partial<FakeDb>): {
     sessions: seed?.sessions ? [...seed.sessions] : [],
     students: seed?.students ? [...seed.students] : [],
     submissions: seed?.submissions ? [...seed.submissions] : [],
+    referenceLibraries: seed?.referenceLibraries ? [...seed.referenceLibraries] : [],
+    referenceSubmissions: seed?.referenceSubmissions ? [...seed.referenceSubmissions] : [],
+    selectedReferenceLibraries: seed?.selectedReferenceLibraries
+      ? { ...seed.selectedReferenceLibraries }
+      : {},
   };
   const savedAnalyses = new Map<string, unknown>();
   let counter = 1000;
@@ -248,6 +257,76 @@ export function createFakeSessions(seed?: Partial<FakeDb>): {
       }
       case "list_submissions":
         return Promise.resolve(db.submissions.filter((s) => s.session_id === args["sessionId"]));
+      case "list_reference_libraries":
+        return Promise.resolve([...db.referenceLibraries]);
+      case "list_reference_submissions":
+        return Promise.resolve(
+          db.referenceSubmissions.filter((item) => item.library_id === args["libraryId"]),
+        );
+      case "selected_reference_library_ids":
+        return Promise.resolve(db.selectedReferenceLibraries[String(args["sessionId"])] ?? []);
+      case "set_session_reference_libraries": {
+        const sessionId = String(args["sessionId"]);
+        const ids = args["libraryIds"];
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) {
+          return fail("validation", "library ids must be strings");
+        }
+        if (ids.some((id) => !db.referenceLibraries.some((library) => library.id === id))) {
+          return fail("not_found", "reference library not found");
+        }
+        db.selectedReferenceLibraries[sessionId] = [...ids];
+        return Promise.resolve([...ids]);
+      }
+      case "archive_completed_session": {
+        const sessionId = String(args["sessionId"]);
+        const name = String(args["libraryName"] ?? "").trim();
+        const session = db.sessions.find((item) => item.id === sessionId);
+        const sources = db.submissions.filter(
+          (submission) => submission.session_id === sessionId && submission.original_text.trim() !== "",
+        );
+        if (!session) return fail("not_found", "session not found");
+        if (name === "") return fail("validation", "reference library name is required");
+        if (!savedAnalyses.has(sessionId) || sources.length < 2) {
+          return fail("validation", "run analysis and provide two submissions before archiving");
+        }
+        const library: ReferenceLibrary = {
+          id: nextId("library"),
+          name,
+          source_session_id: session.id,
+          source_session_name: session.name,
+          created_at: now(),
+          fingerprint_version: 1,
+          normalization_version: 1,
+          modified_version: 1,
+        };
+        db.referenceLibraries.push(library);
+        for (const source of sources) {
+          const student = db.students.find((item) => item.id === source.student_id);
+          db.referenceSubmissions.push({
+            id: nextId("ref"),
+            library_id: library.id,
+            source_label: student?.display_name ?? "Student",
+            source_filename: source.source_filename ?? null,
+            source_type: source.source_type,
+            original_text: source.original_text,
+            content_sha256: source.content_sha256,
+            created_at: source.created_at,
+          });
+        }
+        return Promise.resolve(library);
+      }
+      case "delete_reference_library": {
+        const index = db.referenceLibraries.findIndex((item) => item.id === args["id"]);
+        if (index < 0) return fail("not_found", "reference library not found");
+        const [removed] = db.referenceLibraries.splice(index, 1);
+        db.referenceSubmissions = db.referenceSubmissions.filter(
+          (item) => item.library_id !== removed?.id,
+        );
+        for (const [sessionId, selected] of Object.entries(db.selectedReferenceLibraries)) {
+          db.selectedReferenceLibraries[sessionId] = selected.filter((id) => id !== removed?.id);
+        }
+        return Promise.resolve(null);
+      }
       case "get_session_analysis":
         return Promise.resolve(savedAnalyses.get(String(args["sessionId"])) ?? null);
       case "analyze_session": {
@@ -499,6 +578,17 @@ export function fakeAnalyze(db: FakeDb, sessionId: string) {
     };
   });
 
+  const compared_libraries = (db.selectedReferenceLibraries[sessionId] ?? []).flatMap((id) => {
+    const library = db.referenceLibraries.find((item) => item.id === id);
+    if (!library) return [];
+    return [{
+      id,
+      name: library.name,
+      source_session_name: library.source_session_name,
+      source_count: db.referenceSubmissions.filter((item) => item.library_id === id).length,
+    }];
+  });
+
   return {
     fingerprint_version: 1,
     normalization_version: 1,
@@ -508,6 +598,8 @@ export function fakeAnalyze(db: FakeDb, sessionId: string) {
     prompt_applied: promptWords.length >= 5,
     pairs: withCoverage,
     per_student,
+    compared_libraries,
+    historical_matches: [],
   };
 }
 

@@ -70,6 +70,30 @@ export const StudentCoverageSchema = z.object({
 
 export type StudentCoverage = z.infer<typeof StudentCoverageSchema>;
 
+export const ComparedLibrarySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  source_session_name: z.string(),
+  source_count: z.number().int().nonnegative(),
+});
+
+export const HistoricalPairAnalysisSchema = z.object({
+  student_id: z.string(),
+  library_id: z.string(),
+  library_name: z.string(),
+  reference_submission_id: z.string(),
+  reference_label: z.string(),
+  reference_filename: z.string().nullable(),
+  reference_text: z.string(),
+  coverage_current: z.number().nullable(),
+  exact_coverage_current: z.number().nullable(),
+  modified_coverage_current: z.number().nullable(),
+  passages: z.array(PassageSchema),
+  excluded: z.array(ExcludedEvidenceSchema),
+});
+
+export type HistoricalPairAnalysis = z.infer<typeof HistoricalPairAnalysisSchema>;
+
 export const ExactAnalysisSchema = z.object({
   fingerprint_version: z.number(),
   normalization_version: z.number(),
@@ -79,6 +103,8 @@ export const ExactAnalysisSchema = z.object({
   prompt_applied: z.boolean(),
   pairs: z.array(PairAnalysisSchema),
   per_student: z.array(StudentCoverageSchema),
+  compared_libraries: z.array(ComparedLibrarySchema).default([]),
+  historical_matches: z.array(HistoricalPairAnalysisSchema).default([]),
 });
 
 export type ExactAnalysis = z.infer<typeof ExactAnalysisSchema>;
@@ -91,6 +117,7 @@ export const AnalysisProgressSchema = z.object({
     "modified",
     "aligning",
     "scoring",
+    "historical",
     "saving",
     "complete",
     "failed",

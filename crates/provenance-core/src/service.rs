@@ -3,14 +3,17 @@
 
 use sqlx::SqlitePool;
 
+use crate::analysis;
 use crate::domain::{
-    now_iso, NewSession, NewStudent, Session, SessionStatus, SessionUpdate, SourceType, Student,
-    Submission,
+    now_iso, NewSession, NewStudent, ReferenceLibrary, ReferenceSubmission, Session, SessionStatus,
+    SessionUpdate, SourceType, Student, Submission,
 };
 use crate::error::CoreError;
 use crate::import::{extract_file, FileIngestResult};
 use crate::ingest::{clean_filename, validate_submission_bytes};
-use crate::storage::{SessionPatch, SessionRepo, StudentRepo, SubmissionRepo};
+use crate::storage::{
+    AnalysisRepo, ReferenceLibraryRepo, SessionPatch, SessionRepo, StudentRepo, SubmissionRepo,
+};
 
 fn require_draft(status: SessionStatus, action: &str) -> Result<(), CoreError> {
     if status != SessionStatus::Draft {
@@ -140,6 +143,93 @@ pub async fn list_submissions(
 ) -> Result<Vec<Submission>, CoreError> {
     SessionRepo::get(pool, session_id).await?;
     SubmissionRepo::list_by_session(pool, session_id).await
+}
+
+/// Archive a session only after its current input digest has a valid saved analysis.
+/// The resulting library is a detached, read-only content snapshot.
+pub async fn archive_completed_session(
+    pool: &SqlitePool,
+    session_id: &str,
+    library_name: &str,
+) -> Result<ReferenceLibrary, CoreError> {
+    let session = SessionRepo::get(pool, session_id).await?;
+    let name = library_name.trim();
+    if name.is_empty() || name.chars().count() > crate::domain::MAX_NAME_LEN {
+        return Err(CoreError::validation(
+            "reference library name must contain 1 to 200 characters",
+        ));
+    }
+    let submissions = SubmissionRepo::list_by_session(pool, session_id).await?;
+    let source_count = submissions
+        .iter()
+        .filter(|submission| !submission.original_text.trim().is_empty())
+        .count();
+    if source_count < 2 {
+        return Err(CoreError::validation(
+            "archive requires at least two non-empty student submissions",
+        ));
+    }
+    let input_hash = analysis::session_analysis_input_hash(pool, session_id).await?;
+    let report = AnalysisRepo::result_for_input(pool, session_id, &input_hash)
+        .await?
+        .ok_or_else(|| {
+            CoreError::validation("run analysis for the current session inputs before archiving")
+        })?;
+    let _: analysis::ExactAnalysis = serde_json::from_str(&report).map_err(|_| {
+        CoreError::validation("the saved analysis is corrupt and the session cannot be archived")
+    })?;
+    ReferenceLibraryRepo::snapshot_session(
+        pool,
+        name,
+        session_id,
+        &session.name,
+        provenance_match::FINGERPRINT_VERSION,
+        provenance_match::NORMALIZATION_VERSION,
+        provenance_match::MODIFIED_VERSION,
+    )
+    .await
+}
+
+pub async fn list_reference_libraries(
+    pool: &SqlitePool,
+) -> Result<Vec<ReferenceLibrary>, CoreError> {
+    ReferenceLibraryRepo::list(pool).await
+}
+
+pub async fn list_reference_submissions(
+    pool: &SqlitePool,
+    library_id: &str,
+) -> Result<Vec<ReferenceSubmission>, CoreError> {
+    ReferenceLibraryRepo::submissions(pool, library_id).await
+}
+
+pub async fn selected_reference_library_ids(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> Result<Vec<String>, CoreError> {
+    SessionRepo::get(pool, session_id).await?;
+    ReferenceLibraryRepo::selected_ids(pool, session_id).await
+}
+
+pub async fn set_session_reference_libraries(
+    pool: &SqlitePool,
+    session_id: &str,
+    library_ids: Vec<String>,
+) -> Result<Vec<String>, CoreError> {
+    let session = SessionRepo::get(pool, session_id).await?;
+    require_draft(session.status, "changing selected reference libraries")?;
+    let unique: std::collections::HashSet<&str> = library_ids.iter().map(String::as_str).collect();
+    if unique.len() != library_ids.len() {
+        return Err(CoreError::validation(
+            "a reference library can only be selected once",
+        ));
+    }
+    ReferenceLibraryRepo::replace_selection(pool, session_id, &library_ids).await?;
+    ReferenceLibraryRepo::selected_ids(pool, session_id).await
+}
+
+pub async fn delete_reference_library(pool: &SqlitePool, id: &str) -> Result<(), CoreError> {
+    ReferenceLibraryRepo::delete(pool, id).await
 }
 
 /// Save an uploaded digital text file (TXT/Markdown/PDF/DOCX).

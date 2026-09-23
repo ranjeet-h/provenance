@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
-use crate::domain::Submission;
+use crate::domain::{ReferenceLibrary, ReferenceSubmission, Submission};
 use crate::error::CoreError;
 use crate::service::list_students;
-use crate::storage::{AnalysisRepo, SessionRepo, SubmissionRepo};
+use crate::storage::{AnalysisRepo, ReferenceLibraryRepo, SessionRepo, SubmissionRepo};
 use provenance_match::{
     apply_exclusion, canonicalize, common_token_mask, compare_documents, find_modified_matches,
     is_common_range, prompt_token_mask, shingle_document_frequency, union_len, CommonTextConfig,
@@ -33,6 +33,7 @@ pub enum AnalysisStage {
     Modified,
     Aligning,
     Scoring,
+    Historical,
     Saving,
     Complete,
     Failed,
@@ -109,12 +110,25 @@ pub async fn session_analysis_input_hash(
             )
         })
         .collect();
+    let selected_references = ReferenceLibraryRepo::selected_submissions(pool, session_id).await?;
+    let reference_inputs: Vec<(String, String, String, String)> = selected_references
+        .iter()
+        .map(|(library, reference)| {
+            (
+                library.id.clone(),
+                library.name.clone(),
+                reference.id.clone(),
+                hex::encode(Sha256::digest(reference.original_text.as_bytes())),
+            )
+        })
+        .collect();
     let input = serde_json::to_vec(&(
         session_id,
         session.assignment_prompt,
         session.excluded_reference_text,
         session.exclude_common_text,
         submission_inputs,
+        reference_inputs,
         FINGERPRINT_VERSION,
         NORMALIZATION_VERSION,
         COMMON_TEXT_VERSION,
@@ -244,6 +258,37 @@ pub struct ExactAnalysis {
     pub prompt_applied: bool,
     pub pairs: Vec<PairAnalysis>,
     pub per_student: Vec<StudentExactCoverage>,
+    /// Selected read-only historical sources, included even with no matches.
+    #[serde(default)]
+    pub compared_libraries: Vec<ComparedLibrary>,
+    /// Historical evidence remains separate from current-student pair scores.
+    #[serde(default)]
+    pub historical_matches: Vec<HistoricalPairAnalysis>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComparedLibrary {
+    pub id: String,
+    pub name: String,
+    pub source_session_name: String,
+    pub source_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistoricalPairAnalysis {
+    pub student_id: String,
+    pub library_id: String,
+    pub library_name: String,
+    pub reference_submission_id: String,
+    pub reference_label: String,
+    pub reference_filename: Option<String>,
+    /// Embedded to make saved highlighted evidence self-contained.
+    pub reference_text: String,
+    pub coverage_current: Option<f64>,
+    pub exact_coverage_current: Option<f64>,
+    pub modified_coverage_current: Option<f64>,
+    pub passages: Vec<PassageEvidence>,
+    pub excluded: Vec<ExcludedEvidence>,
 }
 
 fn char_span(
@@ -279,6 +324,234 @@ fn eligible_coverage(matched: &[(usize, usize)], eligible_tokens: usize) -> Opti
     }
 }
 
+fn exclusion_evidence(
+    side: ExclusionSide,
+    spans: &[provenance_match::ExcludedSpan],
+    doc: &provenance_match::CanonicalDocument,
+) -> Vec<ExcludedEvidence> {
+    spans
+        .iter()
+        .map(|span| {
+            let (char_start, char_end) = char_span(doc, span.token_start, span.token_end);
+            ExcludedEvidence {
+                side,
+                token_start: span.token_start,
+                token_end: span.token_end,
+                char_start,
+                char_end,
+                reason: span.reason,
+                tokens: span.token_end - span.token_start,
+            }
+        })
+        .collect()
+}
+
+fn analyze_historical_pair(
+    student_id: &str,
+    current: &provenance_match::CanonicalDocument,
+    current_common: &[bool],
+    library: &ReferenceLibrary,
+    reference: &ReferenceSubmission,
+    prompt_docs: &[Vec<String>],
+    reference_docs: &[Vec<String>],
+) -> HistoricalPairAnalysis {
+    let historical = canonicalize(&reference.original_text);
+    let current_tokens: Vec<String> = current
+        .tokens
+        .iter()
+        .map(|token| token.normalized.clone())
+        .collect();
+    let historical_tokens: Vec<String> = historical
+        .tokens
+        .iter()
+        .map(|token| token.normalized.clone())
+        .collect();
+    let cfg = CommonTextConfig::default();
+    let mut current_exclusions =
+        prompt_token_mask(&current_tokens, prompt_docs, cfg.prompt_min_tokens);
+    current_exclusions.extend(
+        prompt_token_mask(&current_tokens, reference_docs, cfg.prompt_min_tokens)
+            .into_iter()
+            .map(|(start, end, _)| (start, end, ExclusionReason::Reference)),
+    );
+    let mut historical_exclusions =
+        prompt_token_mask(&historical_tokens, prompt_docs, cfg.prompt_min_tokens);
+    historical_exclusions.extend(
+        prompt_token_mask(&historical_tokens, reference_docs, cfg.prompt_min_tokens)
+            .into_iter()
+            .map(|(start, end, _)| (start, end, ExclusionReason::Reference)),
+    );
+    let current_exclusion_ranges: Vec<(usize, usize)> = current_exclusions
+        .iter()
+        .map(|(start, end, _)| (*start, *end))
+        .collect();
+    let eligible_current = current
+        .tokens
+        .len()
+        .saturating_sub(union_len(&current_exclusion_ranges));
+    let exact_cfg = ExactConfig::default();
+    let modified_cfg = ModifiedConfig::default();
+    let exact = compare_documents(current, &historical, exact_cfg);
+    let (counted_current, excluded_current) = apply_exclusion(&exact, true, &current_exclusions);
+    let (counted_reference, excluded_reference) =
+        apply_exclusion(&exact, false, &historical_exclusions);
+    let mut passages = Vec::new();
+    for matched in &exact {
+        let offset = matched.b_start as i64 - matched.a_start as i64;
+        for (start, end) in intersect((matched.a_start, matched.a_end), &counted_current) {
+            let reference_start = (start as i64 + offset) as usize;
+            let reference_end = (end as i64 + offset) as usize;
+            for (kept_start, kept_end) in
+                intersect((reference_start, reference_end), &counted_reference)
+            {
+                let current_start = (kept_start as i64 - offset) as usize;
+                let current_end = (kept_end as i64 - offset) as usize;
+                let (a_char_start, a_char_end) = char_span(current, current_start, current_end);
+                let (b_char_start, b_char_end) = char_span(&historical, kept_start, kept_end);
+                passages.push(PassageEvidence {
+                    kind: PassageKind::Exact,
+                    identity: None,
+                    common_text: is_common_range(current_start, current_end, current_common),
+                    a_token_start: current_start,
+                    a_token_end: current_end,
+                    b_token_start: kept_start,
+                    b_token_end: kept_end,
+                    a_char_start,
+                    a_char_end,
+                    b_char_start,
+                    b_char_end,
+                    tokens: current_end - current_start,
+                });
+            }
+        }
+    }
+
+    let exact_a: Vec<(usize, usize)> = exact
+        .iter()
+        .map(|matched| (matched.a_start, matched.a_end))
+        .collect();
+    let exact_b: Vec<(usize, usize)> = exact
+        .iter()
+        .map(|matched| (matched.b_start, matched.b_end))
+        .collect();
+    let modified = find_modified_matches(
+        &current_tokens,
+        &historical_tokens,
+        &exact_a,
+        &exact_b,
+        exact_cfg,
+        modified_cfg,
+    );
+    let mut modified_ranges = Vec::new();
+    let mut excluded = exclusion_evidence(ExclusionSide::A, &excluded_current, current);
+    excluded.extend(exclusion_evidence(
+        ExclusionSide::B,
+        &excluded_reference,
+        &historical,
+    ));
+    for matched in modified {
+        let (kept_a, excluded_a) = apply_exclusion(
+            &[TokenMatch {
+                a_start: matched.a_start,
+                a_end: matched.a_end,
+                b_start: matched.b_start,
+                b_end: matched.b_end,
+            }],
+            true,
+            &current_exclusions,
+        );
+        let (kept_b, excluded_b) = apply_exclusion(
+            &[TokenMatch {
+                a_start: matched.a_start,
+                a_end: matched.a_end,
+                b_start: matched.b_start,
+                b_end: matched.b_end,
+            }],
+            false,
+            &historical_exclusions,
+        );
+        excluded.extend(exclusion_evidence(ExclusionSide::A, &excluded_a, current));
+        excluded.extend(exclusion_evidence(
+            ExclusionSide::B,
+            &excluded_b,
+            &historical,
+        ));
+        for (start, end) in kept_a {
+            let mut b_positions = Vec::new();
+            for token in start..end {
+                if let Some(position) = matched
+                    .a_to_b
+                    .get(token.wrapping_sub(matched.a_start))
+                    .copied()
+                    .flatten()
+                {
+                    b_positions.push(position);
+                }
+            }
+            if b_positions.len() < modified_cfg.min_tokens {
+                continue;
+            }
+            let b_start = b_positions[0];
+            let b_end = b_positions[b_positions.len() - 1] + 1;
+            for (kept_b_start, kept_b_end) in intersect((b_start, b_end), &kept_b) {
+                let mut a_positions = Vec::new();
+                for token in start..end {
+                    if matches!(
+                        matched
+                            .a_to_b
+                            .get(token.wrapping_sub(matched.a_start))
+                            .copied()
+                            .flatten(),
+                        Some(position) if position >= kept_b_start && position < kept_b_end
+                    ) {
+                        a_positions.push(token);
+                    }
+                }
+                if a_positions.len() < modified_cfg.min_tokens {
+                    continue;
+                }
+                let a_start = a_positions[0];
+                let a_end = a_positions[a_positions.len() - 1] + 1;
+                let (a_char_start, a_char_end) = char_span(current, a_start, a_end);
+                let (b_char_start, b_char_end) = char_span(&historical, kept_b_start, kept_b_end);
+                modified_ranges.push((a_start, a_end));
+                passages.push(PassageEvidence {
+                    kind: PassageKind::Modified,
+                    identity: Some(matched.identity),
+                    common_text: is_common_range(a_start, a_end, current_common),
+                    a_token_start: a_start,
+                    a_token_end: a_end,
+                    b_token_start: kept_b_start,
+                    b_token_end: kept_b_end,
+                    a_char_start,
+                    a_char_end,
+                    b_char_start,
+                    b_char_end,
+                    tokens: a_end - a_start,
+                });
+            }
+        }
+    }
+    passages.sort_by_key(|passage| (passage.a_token_start, passage.b_token_start));
+    excluded.sort_by_key(|item| (item.side as u8, item.token_start));
+    let mut all_current = counted_current.clone();
+    all_current.extend(modified_ranges.iter().copied());
+    HistoricalPairAnalysis {
+        student_id: student_id.to_string(),
+        library_id: library.id.clone(),
+        library_name: library.name.clone(),
+        reference_submission_id: reference.id.clone(),
+        reference_label: reference.source_label.clone(),
+        reference_filename: reference.source_filename.clone(),
+        reference_text: reference.original_text.clone(),
+        coverage_current: eligible_coverage(&all_current, eligible_current),
+        exact_coverage_current: eligible_coverage(&counted_current, eligible_current),
+        modified_coverage_current: eligible_coverage(&modified_ranges, eligible_current),
+        passages,
+        excluded,
+    }
+}
+
 /// Analyze one session's current submissions: exact engine with Phase 6
 /// prompt + frequency exclusion applied before scoring.
 pub async fn analyze_session_exact(
@@ -311,6 +584,7 @@ where
     let session = SessionRepo::get(pool, session_id).await?;
     let students = list_students(pool, session_id).await?;
     let submissions = SubmissionRepo::list_by_session(pool, session_id).await?;
+    let selected_references = ReferenceLibraryRepo::selected_submissions(pool, session_id).await?;
 
     let by_student: HashMap<&str, &Submission> = submissions
         .iter()
@@ -828,6 +1102,63 @@ where
         .collect();
     per_student.sort_by(|x, y| x.student_id.cmp(&y.student_id));
 
+    let mut compared_libraries: Vec<ComparedLibrary> = Vec::new();
+    for (library, _) in &selected_references {
+        if let Some(existing) = compared_libraries
+            .iter_mut()
+            .find(|item| item.id == library.id)
+        {
+            existing.source_count += 1;
+        } else {
+            compared_libraries.push(ComparedLibrary {
+                id: library.id.clone(),
+                name: library.name.clone(),
+                source_session_name: library.source_session_name.clone(),
+                source_count: 1,
+            });
+        }
+    }
+    let historical_total = ids.len().saturating_mul(selected_references.len());
+    let mut historical_matches = Vec::new();
+    if historical_total > 0 {
+        emit_progress(
+            &mut on_progress,
+            session_id,
+            AnalysisStage::Historical,
+            0.90,
+            0,
+            historical_total,
+            cached_pairs,
+        );
+        let mut historical_completed = 0;
+        for (index, student_id) in ids.iter().enumerate() {
+            for (library, reference) in &selected_references {
+                let comparison = analyze_historical_pair(
+                    student_id,
+                    &docs[index],
+                    &common_masks[index],
+                    library,
+                    reference,
+                    &prompt_docs,
+                    &reference_docs,
+                );
+                if !comparison.passages.is_empty() {
+                    historical_matches.push(comparison);
+                }
+                historical_completed += 1;
+                emit_progress(
+                    &mut on_progress,
+                    session_id,
+                    AnalysisStage::Historical,
+                    0.90 + 0.08 * historical_completed as f64 / historical_total as f64,
+                    historical_completed,
+                    historical_total,
+                    cached_pairs,
+                );
+            }
+        }
+    }
+
     Ok(ExactAnalysis {
         fingerprint_version: FINGERPRINT_VERSION,
         normalization_version: NORMALIZATION_VERSION,
@@ -837,6 +1168,8 @@ where
         prompt_applied,
         pairs,
         per_student,
+        compared_libraries,
+        historical_matches,
     })
 }
 

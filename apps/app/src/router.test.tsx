@@ -51,7 +51,7 @@ describe("Phase 1 routes", () => {
     expect(
       await screen.findByRole("heading", { name: /^reference libraries$/i, level: 1 }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/no reference libraries yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no reference libraries yet/i)).toBeInTheDocument();
   });
 
   it("renders settings diagnostics", async () => {
