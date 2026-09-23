@@ -3369,6 +3369,7 @@ dependencies = [
  "lopdf",
  "pdf-extract",
  "provenance-match",
+ "provenance-report",
  "quick-xml 0.42.0",
  "serde",
  "serde_json",
@@ -3400,10 +3401,12 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "hex",
+ "provenance-match",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.20",
+ "zip",
 ]
 
 [[package]]

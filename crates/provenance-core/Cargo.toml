@@ -14,6 +14,7 @@ chrono = { workspace = true }
 sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio"] }
 tokio = { version = "1.47.1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
 provenance-match = { version = "0.1.0", path = "../provenance-match" }
+provenance-report = { version = "0.1.0", path = "../provenance-report" }
 zip = "8.6.0"
 quick-xml = "0.42.0"
 pdf-extract = "0.12.0"

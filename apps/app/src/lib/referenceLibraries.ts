@@ -28,6 +28,8 @@ export const ReferenceSubmissionSchema = z.object({
 
 export type ReferenceSubmission = z.infer<typeof ReferenceSubmissionSchema>;
 
+export const MAX_PLAGPACK_BYTES = 50_000_000;
+
 async function call<T>(cmd: string, args: Record<string, unknown>, schema: z.ZodType<T>): Promise<T> {
   let raw: unknown;
   try {
@@ -90,4 +92,12 @@ export function setSessionReferenceLibraries(
 
 export function deleteReferenceLibrary(id: string): Promise<void> {
   return callVoid("delete_reference_library", { id });
+}
+
+export function exportReferenceLibrary(id: string): Promise<number[]> {
+  return call("export_reference_library", { libraryId: id }, z.array(z.number().int().min(0).max(255)));
+}
+
+export function importReferenceLibrary(bytes: number[]): Promise<ReferenceLibrary> {
+  return call("import_reference_library", { bytes }, ReferenceLibrarySchema);
 }

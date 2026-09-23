@@ -8,8 +8,11 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import {
   deleteReferenceLibrary,
+  exportReferenceLibrary,
+  importReferenceLibrary,
   listReferenceLibraries,
   listReferenceSubmissions,
+  MAX_PLAGPACK_BYTES,
 } from "@/lib/referenceLibraries";
 import { asSessionsError } from "@/lib/sessions";
 
@@ -17,6 +20,9 @@ export function ReferenceLibrariesPage() {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [message, setMessage] = React.useState<string | null>(null);
+  const [importing, setImporting] = React.useState(false);
+  const [exportingId, setExportingId] = React.useState<string | null>(null);
   const librariesQuery = useQuery({
     queryKey: ["reference-libraries"],
     queryFn: listReferenceLibraries,
@@ -42,13 +48,78 @@ export function ReferenceLibrariesPage() {
     }
   }
 
+  async function onImport(event: React.ChangeEvent<HTMLInputElement>): Promise<void> {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    setError(null);
+    setMessage(null);
+    setImporting(true);
+    try {
+      if (!file.name.toLowerCase().endsWith(".plagpack")) {
+        throw { code: "validation", message: "Choose a .plagpack reference library." };
+      }
+      if (file.size > MAX_PLAGPACK_BYTES) {
+        throw { code: "validation", message: "The .plagpack file exceeds the 50 MB limit." };
+      }
+      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+      const imported = await importReferenceLibrary(bytes);
+      await queryClient.invalidateQueries({ queryKey: ["reference-libraries"] });
+      setMessage(`Imported “${imported.name}” with verified text and hashes.`);
+    } catch (cause) {
+      setError(asSessionsError(cause).message);
+    } finally {
+      setImporting(false);
+      input.value = "";
+    }
+  }
+
+  async function onExport(id: string, name: string): Promise<void> {
+    setError(null);
+    setMessage(null);
+    setExportingId(id);
+    try {
+      const bytes = await exportReferenceLibrary(id);
+      const blob = new Blob([Uint8Array.from(bytes)], { type: "application/zip" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const safeName = name
+        .normalize("NFKD")
+        .replace(/[^a-zA-Z0-9._-]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "reference-library";
+      link.href = url;
+      link.download = `${safeName}.plagpack`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setMessage(`Exported “${name}” as an anonymized .plagpack.`);
+    } catch (cause) {
+      setError(asSessionsError(cause).message);
+    } finally {
+      setExportingId(null);
+    }
+  }
+
   return (
     <div>
       <PageHeader
         title="Reference Libraries"
         description="Read-only snapshots of analyzed sessions for separate historical comparisons."
+        actions={(
+          <label className="inline-flex cursor-pointer items-center rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent">
+            {importing ? "Importing…" : "Import .plagpack"}
+            <input
+              type="file"
+              accept=".plagpack,application/zip"
+              aria-label="Import .plagpack reference library"
+              disabled={importing}
+              onChange={(event) => void onImport(event)}
+              className="sr-only"
+            />
+          </label>
+        )}
       />
       {error ? <p role="alert" className="mb-3 text-sm text-destructive">{error}</p> : null}
+      {message ? <p role="status" className="mb-3 text-sm text-muted-foreground">{message}</p> : null}
       {librariesQuery.isPending ? (
         <LoadingState label="Loading reference libraries…" />
       ) : librariesQuery.isError ? (
@@ -77,6 +148,14 @@ export function ReferenceLibrariesPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={exportingId === library.id}
+                    onClick={() => void onExport(library.id, library.name)}
+                  >
+                    {exportingId === library.id ? "Exporting…" : "Export .plagpack"}
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"

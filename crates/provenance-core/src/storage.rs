@@ -746,6 +746,67 @@ impl ReferenceLibraryRepo {
         })
     }
 
+    pub async fn import_portable_pack(
+        pool: &SqlitePool,
+        name: &str,
+        fingerprint_version: u32,
+        normalization_version: u32,
+        modified_version: u32,
+        documents: &[(String, SourceType, String, String)],
+    ) -> Result<ReferenceLibrary, CoreError> {
+        let mut tx = pool.begin().await.map_err(CoreError::Database)?;
+        let id = new_id();
+        let source_session_id = format!("imported-{}", new_id());
+        let source_session_name = "Imported .plagpack".to_string();
+        let created_at = now_iso();
+        sqlx::query(
+            "INSERT INTO reference_libraries
+             (id, name, source_session_id, source_session_name, created_at,
+              fingerprint_version, normalization_version, modified_version)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(name)
+        .bind(&source_session_id)
+        .bind(&source_session_name)
+        .bind(&created_at)
+        .bind(i64::from(fingerprint_version))
+        .bind(i64::from(normalization_version))
+        .bind(i64::from(modified_version))
+        .execute(&mut *tx)
+        .await
+        .map_err(CoreError::Database)?;
+        for (source_label, source_type, original_text, content_sha256) in documents {
+            sqlx::query(
+                "INSERT INTO reference_submissions
+                 (id, library_id, source_label, source_filename, source_type,
+                  original_text, content_sha256, created_at)
+                 VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+            )
+            .bind(new_id())
+            .bind(&id)
+            .bind(source_label)
+            .bind(source_type.as_str())
+            .bind(original_text)
+            .bind(content_sha256)
+            .bind(&created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(CoreError::Database)?;
+        }
+        tx.commit().await.map_err(CoreError::Database)?;
+        Ok(ReferenceLibrary {
+            id,
+            name: name.to_string(),
+            source_session_id,
+            source_session_name,
+            created_at,
+            fingerprint_version,
+            normalization_version,
+            modified_version,
+        })
+    }
+
     pub async fn list(pool: &SqlitePool) -> Result<Vec<ReferenceLibrary>, CoreError> {
         let rows =
             sqlx::query("SELECT * FROM reference_libraries ORDER BY created_at DESC, rowid DESC")

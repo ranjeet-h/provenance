@@ -232,6 +232,63 @@ pub async fn delete_reference_library(pool: &SqlitePool, id: &str) -> Result<(),
     ReferenceLibraryRepo::delete(pool, id).await
 }
 
+pub async fn export_reference_library(
+    pool: &SqlitePool,
+    library_id: &str,
+) -> Result<Vec<u8>, CoreError> {
+    let library = ReferenceLibraryRepo::get(pool, library_id).await?;
+    let references = ReferenceLibraryRepo::submissions(pool, library_id).await?;
+    let sources: Vec<provenance_report::plagpack::PackSourceDocument> = references
+        .into_iter()
+        .map(
+            |reference| provenance_report::plagpack::PackSourceDocument {
+                source_type: reference.source_type.as_str().to_string(),
+                original_text: reference.original_text,
+                content_sha256: reference.content_sha256,
+            },
+        )
+        .collect();
+    provenance_report::plagpack::export_plagpack(
+        &library.name,
+        provenance_report::plagpack::PackEngineVersions {
+            fingerprint: library.fingerprint_version,
+            normalization: library.normalization_version,
+            modified: library.modified_version,
+        },
+        &sources,
+    )
+    .map_err(|err| CoreError::validation(err.to_string()))
+}
+
+pub async fn import_reference_library(
+    pool: &SqlitePool,
+    bytes: &[u8],
+) -> Result<ReferenceLibrary, CoreError> {
+    let pack = provenance_report::plagpack::import_plagpack(bytes)
+        .map_err(|err| CoreError::validation(err.to_string()))?;
+    let documents: Vec<(String, SourceType, String, String)> = pack
+        .documents
+        .into_iter()
+        .map(|document| {
+            Ok((
+                document.source_label,
+                SourceType::parse(&document.source_type)?,
+                document.original_text,
+                document.content_sha256,
+            ))
+        })
+        .collect::<Result<_, CoreError>>()?;
+    ReferenceLibraryRepo::import_portable_pack(
+        pool,
+        &pack.library_name,
+        pack.engine_versions.fingerprint,
+        pack.engine_versions.normalization,
+        pack.engine_versions.modified,
+        &documents,
+    )
+    .await
+}
+
 /// Save an uploaded digital text file (TXT/Markdown/PDF/DOCX).
 pub async fn save_file_submission(
     pool: &SqlitePool,

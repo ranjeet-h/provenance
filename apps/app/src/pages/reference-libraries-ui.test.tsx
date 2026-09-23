@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { resetInvokeImpl, setInvokeImpl } from "../lib/tauri";
@@ -127,5 +127,52 @@ describe("reference libraries", () => {
     const dialog = await screen.findByRole("dialog", { name: /remove biology 2025/i });
     await user.click(within(dialog).getByRole("button", { name: /remove library/i }));
     expect(await screen.findByText(/no reference libraries yet/i)).toBeInTheDocument();
+  });
+
+  it("imports only a selected .plagpack file through the native command boundary", async () => {
+    const user = userEvent.setup();
+    const { invoke, db } = createFakeSessions();
+    const observedInvoke = vi.fn(invoke);
+    setInvokeImpl(observedInvoke);
+    renderRouteAt("/reference-libraries");
+    await screen.findByRole("heading", { name: /reference libraries/i });
+    const file = new File(["package bytes"], "biology.plagpack", { type: "application/zip" });
+    Object.defineProperty(file, "arrayBuffer", {
+      value: async () => new TextEncoder().encode("package bytes").buffer,
+    });
+    await user.upload(screen.getByLabelText(/import \.plagpack reference library/i), file);
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/imported “imported history”/i);
+    expect(observedInvoke).toHaveBeenCalledWith(
+      "import_reference_library",
+      { bytes: Array.from(new TextEncoder().encode("package bytes")) },
+    );
+    expect(db.referenceLibraries).toHaveLength(1);
+  });
+
+  it("exports a portable archive with an unambiguous .plagpack download", async () => {
+    const user = userEvent.setup();
+    const { invoke } = createFakeSessions({ referenceLibraries: [library] });
+    setInvokeImpl(invoke);
+    const originalCreate = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+    const originalRevoke = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
+    const createObjectURL = vi.fn(() => "blob:test-pack");
+    const revokeObjectURL = vi.fn();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    try {
+      renderRouteAt("/reference-libraries");
+      await user.click(await screen.findByRole("button", { name: /export \.plagpack/i }));
+      expect(await screen.findByRole("status")).toHaveTextContent(/exported “biology 2025” as an anonymized \.plagpack/i);
+      expect(createObjectURL).toHaveBeenCalledOnce();
+      expect(click).toHaveBeenCalledOnce();
+    } finally {
+      click.mockRestore();
+      if (originalCreate) Object.defineProperty(URL, "createObjectURL", originalCreate);
+      else Reflect.deleteProperty(URL, "createObjectURL");
+      if (originalRevoke) Object.defineProperty(URL, "revokeObjectURL", originalRevoke);
+      else Reflect.deleteProperty(URL, "revokeObjectURL");
+    }
   });
 });

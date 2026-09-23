@@ -221,6 +221,26 @@ async fn delete_reference_library(db: State<'_, DbState>, id: String) -> Result<
         .map_err(CommandError::from)
 }
 
+#[tauri::command]
+async fn export_reference_library(
+    db: State<'_, DbState>,
+    library_id: String,
+) -> Result<Vec<u8>, CommandError> {
+    service::export_reference_library(&db.0, &library_id)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn import_reference_library(
+    db: State<'_, DbState>,
+    bytes: Vec<u8>,
+) -> Result<ReferenceLibrary, CommandError> {
+    service::import_reference_library(&db.0, &bytes)
+        .await
+        .map_err(CommandError::from)
+}
+
 fn emit_analysis_progress(app: &AppHandle, progress: AnalysisProgress) -> Result<(), CommandError> {
     app.emit("analysis-progress", progress)
         .map_err(|_| CommandError::from(CoreError::validation("analysis progress delivery failed")))
@@ -426,6 +446,8 @@ pub fn run() {
             selected_reference_library_ids,
             set_session_reference_libraries,
             delete_reference_library,
+            export_reference_library,
+            import_reference_library,
             inspect_text
         ])
         .run(tauri::generate_context!())

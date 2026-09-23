@@ -327,6 +327,22 @@ export function createFakeSessions(seed?: Partial<FakeDb>): {
         }
         return Promise.resolve(null);
       }
+      case "export_reference_library":
+        return Promise.resolve([0x50, 0x4b, 0x03, 0x04]);
+      case "import_reference_library": {
+        const library: ReferenceLibrary = {
+          id: nextId("library"),
+          name: "Imported History",
+          source_session_id: `imported-${nextId("source")}`,
+          source_session_name: "Imported .plagpack",
+          created_at: now(),
+          fingerprint_version: 1,
+          normalization_version: 1,
+          modified_version: 1,
+        };
+        db.referenceLibraries.push(library);
+        return Promise.resolve(library);
+      }
       case "get_session_analysis":
         return Promise.resolve(savedAnalyses.get(String(args["sessionId"])) ?? null);
       case "analyze_session": {

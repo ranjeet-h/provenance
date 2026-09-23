@@ -1,5 +1,7 @@
 //! provenance-report: per-student evidence reports, .plagpack manifest, signing.
-//! Phase 0 baseline — full report + integrity arrives Phase 18-20.
+//! Local reports, portable text libraries, and integrity metadata.
+
+pub mod plagpack;
 
 #[must_use]
 pub fn workspace_marker() -> &'static str {
@@ -7,7 +9,7 @@ pub fn workspace_marker() -> &'static str {
 }
 
 /// .plagpack format version. Pinned at 1 per plan_v1 Phase 18.
-pub const PLAGPACK_FORMAT_VERSION: u32 = 1;
+pub const PLAGPACK_FORMAT_VERSION: u32 = plagpack::PLAGPACK_FORMAT_VERSION;
 
 #[cfg(test)]
 mod tests {
