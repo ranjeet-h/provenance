@@ -1,0 +1,9 @@
+# Ben Sample
+
+## Neighborhood trees and heat
+
+Urban tree cover can reduce neighborhood heat by shading pavement, walls, and people during the hottest part of the day. Leaves also release water vapor, which can cool the air nearby. These benefits are not distributed evenly: blocks with fewer trees often have more exposed pavement and fewer comfortable places to walk or wait for a bus. A city should measure temperatures and canopy cover block by block before deciding where new trees will help most.
+
+In a summer study, residents measured sidewalk temperatures at noon, three o'clock, and sunset along shaded and unshaded streets. The shaded route stayed cooler after sunset, so families walking home faced less heat exposure. City planners should map tree canopy, bus stops, and safe walking routes together before selecting where to plant additional trees.
+
+Long-term care matters as much as the initial planting. A city needs funds for watering, pruning, and replacing trees that fail to thrive. Neighbors can help choose species and locations because roots, shade, visibility, and maintenance differ from street to street. Repeated temperature readings over several summers would show whether the project works and where the plan should change.
