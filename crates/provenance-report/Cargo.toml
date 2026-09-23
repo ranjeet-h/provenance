@@ -12,3 +12,6 @@ hex = { workspace = true }
 chrono = { workspace = true }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 provenance-match = { version = "0.1.0", path = "../provenance-match" }
+printpdf = { version = "0.12.8", default-features = false, features = ["html"] }
+pdf-extract = "0.12.0"
+ttf-parser = "0.25.1"

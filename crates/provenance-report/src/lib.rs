@@ -2,6 +2,7 @@
 //! Local reports, portable text libraries, and integrity metadata.
 
 pub mod plagpack;
+pub mod report;
 
 #[must_use]
 pub fn workspace_marker() -> &'static str {

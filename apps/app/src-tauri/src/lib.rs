@@ -11,6 +11,7 @@ use provenance_core::domain::{
 use provenance_core::error::CoreError;
 use provenance_core::import::FileIngestResult;
 use provenance_core::{service, storage};
+use provenance_report::report::{self, ReportMode};
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -384,6 +385,41 @@ async fn get_session_analysis(
     Ok(Some(report))
 }
 
+async fn generate_student_report_pdf_for(
+    pool: &SqlitePool,
+    session_id: &str,
+    student_id: &str,
+    anonymize: bool,
+    report_mode: &str,
+) -> Result<Vec<u8>, CoreError> {
+    let mode = match report_mode {
+        "teacher" => ReportMode::Teacher,
+        "self_check" => ReportMode::SelfCheck,
+        other => {
+            return Err(CoreError::validation(format!(
+                "unknown report mode '{other}'; choose teacher or self_check"
+            )));
+        }
+    };
+    let student_report =
+        service::build_student_report(pool, session_id, student_id, anonymize, mode).await?;
+    report::render_report_pdf(&student_report)
+        .map_err(|error| CoreError::validation(error.to_string()))
+}
+
+#[tauri::command]
+async fn generate_student_report_pdf(
+    db: State<'_, DbState>,
+    session_id: String,
+    student_id: String,
+    anonymize: bool,
+    report_mode: String,
+) -> Result<Vec<u8>, CommandError> {
+    generate_student_report_pdf_for(&db.0, &session_id, &student_id, anonymize, &report_mode)
+        .await
+        .map_err(CommandError::from)
+}
+
 /// Upload a digital text file (TXT/Markdown/PDF/DOCX). Scanned/image-only
 /// files return a validation error and are never stored.
 #[tauri::command]
@@ -440,6 +476,7 @@ pub fn run() {
             save_file_submission,
             analyze_session,
             get_session_analysis,
+            generate_student_report_pdf,
             archive_completed_session,
             list_reference_libraries,
             list_reference_submissions,
@@ -486,5 +523,61 @@ mod tests {
         // Serializable for the IPC boundary.
         let json = serde_json::to_string(&locked).expect("serialize");
         assert!(json.contains("\"code\":\"locked\""));
+    }
+
+    #[test]
+    fn report_pdf_command_contract_returns_a_verifiable_local_pdf() {
+        tauri::async_runtime::block_on(async {
+            let base = tempfile::tempdir().expect("temp directory");
+            let pool = storage::open(&base.path().join("report.db"))
+                .await
+                .expect("database");
+            let session = service::create_session(
+                &pool,
+                NewSession {
+                    name: "Report command test".into(),
+                    subject: Some("History".into()),
+                },
+            )
+            .await
+            .expect("session");
+            let student = service::add_student(
+                &pool,
+                &session.id,
+                NewStudent {
+                    display_name: "Report Student".into(),
+                },
+            )
+            .await
+            .expect("student");
+            service::save_text_submission(
+                &pool,
+                &student.id,
+                SourceType::PastedText,
+                None,
+                b"A complete text submission used to verify local report generation.",
+            )
+            .await
+            .expect("submission");
+            let report = analysis::analyze_session_exact(&pool, &session.id)
+                .await
+                .expect("analysis");
+            let input_hash = analysis::session_analysis_input_hash(&pool, &session.id)
+                .await
+                .expect("input hash");
+            let json = serde_json::to_string(&report).expect("analysis JSON");
+            storage::AnalysisRepo::save_result(&pool, &session.id, &input_hash, &json)
+                .await
+                .expect("persist analysis");
+
+            let pdf =
+                generate_student_report_pdf_for(&pool, &session.id, &student.id, false, "teacher")
+                    .await
+                    .expect("report PDF command contract");
+            assert!(pdf.starts_with(b"%PDF-"));
+            let text = provenance_report::report::extract_pdf_text(&pdf).expect("PDF text");
+            assert!(text.contains("Report Student"));
+            assert!(text.contains("This report identifies matching or reused content"));
+        });
     }
 }

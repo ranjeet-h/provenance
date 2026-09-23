@@ -345,6 +345,8 @@ export function createFakeSessions(seed?: Partial<FakeDb>): {
       }
       case "get_session_analysis":
         return Promise.resolve(savedAnalyses.get(String(args["sessionId"])) ?? null);
+      case "generate_student_report_pdf":
+        return Promise.resolve([37, 80, 68, 70, 45]);
       case "analyze_session": {
         const result = fakeAnalyze(db, String(args["sessionId"]));
         savedAnalyses.set(String(args["sessionId"]), result);

@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Play } from "lucide-react";
+import { FileDown, Play } from "lucide-react";
 import { EmptyState } from "@/components/common/EmptyState";
 import { LoadingState } from "@/components/common/LoadingState";
 import { ProgressIndicator } from "@/components/common/ProgressIndicator";
@@ -10,6 +10,7 @@ import {
   analyzeSession,
   cellCoverage,
   cellCoverageByKind,
+  generateStudentReportPdf,
   type HistoricalPairAnalysis,
   exclusionLabel,
   loadSessionAnalysis,
@@ -41,6 +42,10 @@ export function AnalysisSection({
   const [error, setError] = React.useState<string | null>(null);
   const [selected, setSelected] = React.useState<string | null>(null);
   const [progress, setProgress] = React.useState<AnalysisProgress | null>(null);
+  const [anonymizeReports, setAnonymizeReports] = React.useState(false);
+  const [reportingStudentId, setReportingStudentId] = React.useState<string | null>(null);
+  const [reportError, setReportError] = React.useState<string | null>(null);
+  const [reportNotice, setReportNotice] = React.useState<string | null>(null);
   const queryClient = useQueryClient();
   const analysisQuery = useQuery({
     queryKey: ["analysis", sessionId],
@@ -79,6 +84,37 @@ export function AnalysisSection({
       setError(asSessionsError(err).message);
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  async function onGenerateReport(studentId: string): Promise<void> {
+    setReportingStudentId(studentId);
+    setReportError(null);
+    setReportNotice(null);
+    let objectUrl: string | null = null;
+    try {
+      const bytes = await generateStudentReportPdf(
+        sessionId,
+        studentId,
+        anonymizeReports,
+        "teacher",
+      );
+      const pdf = new Blob([Uint8Array.from(bytes)], { type: "application/pdf" });
+      objectUrl = URL.createObjectURL(pdf);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `provenance-${studentId}-evidence-report.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      const downloadedUrl = objectUrl;
+      window.setTimeout(() => URL.revokeObjectURL(downloadedUrl), 0);
+      setReportNotice("The per-student evidence report PDF was generated locally.");
+    } catch (cause) {
+      if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
+      setReportError(asSessionsError(cause).message);
+    } finally {
+      setReportingStudentId(null);
     }
   }
 
@@ -196,6 +232,22 @@ export function AnalysisSection({
 
           <div>
             <h3 className="text-sm font-medium">Per-student overlap</h3>
+            <label className="mt-2 flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={anonymizeReports}
+                onChange={(event) => setAnonymizeReports(event.currentTarget.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-input"
+              />
+              <span>
+                Anonymize names and filenames in PDF
+                <span className="block text-xs text-muted-foreground">
+                  Submitted text is unchanged and may itself identify someone.
+                </span>
+              </span>
+            </label>
+            {reportError ? <p role="alert" className="mt-2 text-sm text-destructive">{reportError}</p> : null}
+            {reportNotice ? <p role="status" className="mt-2 text-sm text-muted-foreground">{reportNotice}</p> : null}
             <ul className="mt-2 space-y-3">
               {report.per_student.map((row) => (
                 <li key={row.student_id}>
@@ -222,6 +274,20 @@ export function AnalysisSection({
                   {row.coverage === null || row.coverage === undefined ? null : (
                     <ProgressIndicator value={row.coverage} label={`Overlap for ${nameById.get(row.student_id) ?? "student"}`} />
                   )}
+                  <Button
+                    className="mt-2"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void onGenerateReport(row.student_id)}
+                    disabled={
+                      reportingStudentId !== null ||
+                      submissionsQuery.isPending ||
+                      !(textByStudent.get(row.student_id)?.trim())
+                    }
+                  >
+                    <FileDown aria-hidden="true" />
+                    {reportingStudentId === row.student_id ? "Generating PDF…" : "Generate evidence report for " + (nameById.get(row.student_id) ?? "student")}
+                  </Button>
                 </li>
               ))}
             </ul>

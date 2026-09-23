@@ -28,3 +28,4 @@ serde_json = "1"
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
 provenance-core = { path = "../../../crates/provenance-core" }
 provenance-match = { path = "../../../crates/provenance-match" }
+provenance-report = { path = "../../../crates/provenance-report" }

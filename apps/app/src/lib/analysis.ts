@@ -173,6 +173,33 @@ export async function loadSessionAnalysis(sessionId: string): Promise<ExactAnaly
   return parsed.data;
 }
 
+export type StudentReportMode = "teacher" | "self_check";
+
+/** Request a locally rendered Tauri PDF. Malformed bytes are a protocol error, never a success. */
+export async function generateStudentReportPdf(
+  sessionId: string,
+  studentId: string,
+  anonymize: boolean,
+  reportMode: StudentReportMode,
+): Promise<number[]> {
+  let raw: unknown;
+  try {
+    raw = await getInvokeImpl()("generate_student_report_pdf", {
+      sessionId,
+      studentId,
+      anonymize,
+      reportMode,
+    });
+  } catch (err) {
+    throw asSessionsError(err);
+  }
+  const parsed = z.array(z.number().int().min(0).max(255)).safeParse(raw);
+  if (!parsed.success || parsed.data.length < 5 || parsed.data[0] !== 37 || parsed.data[1] !== 80 || parsed.data[2] !== 68 || parsed.data[3] !== 70 || parsed.data[4] !== 45) {
+    throw { code: "protocol", message: "The app core did not return a valid PDF report." };
+  }
+  return parsed.data;
+}
+
 /** Coverage of the row student against the column student in a pair. */
 export function cellCoverage(
   pair: PairAnalysis,

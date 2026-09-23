@@ -1,6 +1,9 @@
 //! Use-cases for Phase 2: sessions + students, draft-guarded.
 //! Tauri commands stay thin and delegate here.
 
+use std::collections::{HashMap, HashSet};
+
+use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
 use crate::analysis;
@@ -13,6 +16,11 @@ use crate::import::{extract_file, FileIngestResult};
 use crate::ingest::{clean_filename, validate_submission_bytes};
 use crate::storage::{
     AnalysisRepo, ReferenceLibraryRepo, SessionPatch, SessionRepo, StudentRepo, SubmissionRepo,
+};
+use provenance_report::report::{
+    build_report, ComparedLibrary as ReportLibrary, ComparedSubmission, EngineVersions,
+    MatchKind as ReportMatchKind, ReportEvidence, ReportExclusionInput, ReportInput, ReportMode,
+    ReportSource, SourceCorpus, StudentReport,
 };
 
 fn require_draft(status: SessionStatus, action: &str) -> Result<(), CoreError> {
@@ -327,6 +335,323 @@ pub async fn save_file_submission(
             })
         }
     }
+}
+
+/// Build a per-student report only from an analysis saved for the exact current
+/// session input digest. Corrupt or stale analyses are errors; this function
+/// never reruns analysis or substitutes an empty report.
+pub async fn build_student_report(
+    pool: &SqlitePool,
+    session_id: &str,
+    student_id: &str,
+    anonymize: bool,
+    report_mode: ReportMode,
+) -> Result<StudentReport, CoreError> {
+    let session = SessionRepo::get(pool, session_id).await?;
+    let students = StudentRepo::list_by_session(pool, session_id).await?;
+    let target_student = students
+        .iter()
+        .find(|student| student.id == student_id)
+        .ok_or_else(|| CoreError::not_found("student does not belong to this session"))?;
+    let submissions = SubmissionRepo::list_by_session(pool, session_id).await?;
+    let by_student: HashMap<&str, &Submission> = submissions
+        .iter()
+        .filter(|submission| !submission.original_text.trim().is_empty())
+        .map(|submission| (submission.student_id.as_str(), submission))
+        .collect();
+    let target_submission = by_student.get(student_id).ok_or_else(|| {
+        CoreError::validation("a student report requires a non-empty saved submission")
+    })?;
+
+    let input_hash = analysis::session_analysis_input_hash(pool, session_id).await?;
+    let analysis_json = AnalysisRepo::result_for_input(pool, session_id, &input_hash)
+        .await?
+        .ok_or_else(|| {
+            CoreError::validation(
+                "run analysis for the current inputs before generating a student report",
+            )
+        })?;
+    let report: analysis::ExactAnalysis = serde_json::from_str(&analysis_json).map_err(|_| {
+        CoreError::validation("the saved analysis is corrupt; run analysis again before reporting")
+    })?;
+    let target_coverage = report
+        .per_student
+        .iter()
+        .find(|coverage| coverage.student_id == student_id)
+        .ok_or_else(|| {
+            CoreError::validation("the saved analysis does not contain this student's results")
+        })?;
+
+    let verified_submission_hash = sha256_hex(target_submission.original_text.as_bytes());
+    if verified_submission_hash != target_submission.content_sha256 {
+        return Err(CoreError::validation(
+            "a saved submission hash does not match its text; re-import the affected submission",
+        ));
+    }
+    let mut sources = vec![ReportSource {
+        id: target_submission.id.clone(),
+        label: source_label(target_student, target_submission.source_filename.as_deref()),
+        corpus: SourceCorpus::Current,
+        text: target_submission.original_text.clone(),
+        content_sha256: verified_submission_hash,
+    }];
+    let mut current_comparisons = Vec::new();
+    let mut source_by_student = HashMap::from([(student_id, target_submission.id.as_str())]);
+    for student in &students {
+        if student.id == student_id {
+            continue;
+        }
+        let Some(submission) = by_student.get(student.id.as_str()) else {
+            continue;
+        };
+        let digest = sha256_hex(submission.original_text.as_bytes());
+        if digest != submission.content_sha256 {
+            return Err(CoreError::validation(format!(
+                "the saved submission hash for {} does not match its text; re-import that submission",
+                student.display_name
+            )));
+        }
+        sources.push(ReportSource {
+            id: submission.id.clone(),
+            label: source_label(student, submission.source_filename.as_deref()),
+            corpus: SourceCorpus::Current,
+            text: submission.original_text.clone(),
+            content_sha256: digest.clone(),
+        });
+        current_comparisons.push(ComparedSubmission {
+            id: student.id.clone(),
+            display_name: student.display_name.clone(),
+            source_id: submission.id.clone(),
+            content_sha256: digest,
+        });
+        source_by_student.insert(&student.id, submission.id.as_str());
+    }
+
+    let historical_libraries = report
+        .compared_libraries
+        .iter()
+        .map(|library| ReportLibrary {
+            id: library.id.clone(),
+            name: library.name.clone(),
+            source_session_name: library.source_session_name.clone(),
+            source_count: library.source_count,
+        })
+        .collect::<Vec<_>>();
+    let mut matches = Vec::new();
+    let mut exclusions = Vec::new();
+    let mut exclusion_keys = HashSet::new();
+    for pair in report
+        .pairs
+        .iter()
+        .filter(|pair| pair.a_student_id == student_id || pair.b_student_id == student_id)
+    {
+        let target_is_a = pair.a_student_id == student_id;
+        let peer_id = if target_is_a {
+            pair.b_student_id.as_str()
+        } else {
+            pair.a_student_id.as_str()
+        };
+        let target_source_id = target_submission.id.as_str();
+        let peer_source_id = *source_by_student.get(peer_id).ok_or_else(|| {
+            CoreError::validation("a compared student submission is missing from the report corpus")
+        })?;
+        for (index, passage) in pair.passages.iter().enumerate() {
+            let (student_start, student_end, comparison_start, comparison_end) = if target_is_a {
+                (
+                    passage.a_char_start,
+                    passage.a_char_end,
+                    passage.b_char_start,
+                    passage.b_char_end,
+                )
+            } else {
+                (
+                    passage.b_char_start,
+                    passage.b_char_end,
+                    passage.a_char_start,
+                    passage.a_char_end,
+                )
+            };
+            let (coverage, exact_coverage, modified_coverage) = if target_is_a {
+                (
+                    pair.coverage_a,
+                    pair.exact_coverage_a,
+                    pair.modified_coverage_a,
+                )
+            } else {
+                (
+                    pair.coverage_b,
+                    pair.exact_coverage_b,
+                    pair.modified_coverage_b,
+                )
+            };
+            matches.push(ReportEvidence {
+                id: format!("current-{peer_id}-{index}"),
+                corpus: SourceCorpus::Current,
+                historical_library_id: None,
+                kind: match passage.kind {
+                    analysis::PassageKind::Exact => ReportMatchKind::Exact,
+                    analysis::PassageKind::Modified => ReportMatchKind::Modified,
+                },
+                student_source_id: target_source_id.to_string(),
+                comparison_source_id: peer_source_id.to_string(),
+                student_start,
+                student_end,
+                comparison_start,
+                comparison_end,
+                tokens: passage.tokens,
+                common_text: passage.common_text,
+                coverage,
+                exact_coverage,
+                modified_coverage,
+            });
+        }
+        for excluded in &pair.excluded {
+            let source_student_id = if excluded.side == analysis::ExclusionSide::A {
+                pair.a_student_id.as_str()
+            } else {
+                pair.b_student_id.as_str()
+            };
+            let source_id = source_by_student.get(source_student_id).ok_or_else(|| {
+                CoreError::validation("excluded current evidence references a missing submission")
+            })?;
+            let reason = match excluded.reason {
+                provenance_match::ExclusionReason::Prompt => "Assignment question",
+                provenance_match::ExclusionReason::Reference => "Instructor reference text",
+                provenance_match::ExclusionReason::CommonSessionText => "Common session text",
+            }
+            .to_string();
+            let key = (
+                (*source_id).to_string(),
+                excluded.char_start,
+                excluded.char_end,
+                reason.clone(),
+            );
+            if exclusion_keys.insert(key) {
+                exclusions.push(ReportExclusionInput {
+                    source_id: (*source_id).to_string(),
+                    start: excluded.char_start,
+                    end: excluded.char_end,
+                    reason,
+                    tokens: excluded.tokens,
+                });
+            }
+        }
+    }
+
+    let mut historical_source_ids = HashSet::new();
+    for historical in report
+        .historical_matches
+        .iter()
+        .filter(|item| item.student_id == student_id)
+    {
+        let source_id = historical.reference_submission_id.clone();
+        let content_sha256 = sha256_hex(historical.reference_text.as_bytes());
+        if historical_source_ids.insert(source_id.clone()) {
+            sources.push(ReportSource {
+                id: source_id.clone(),
+                label: format!(
+                    "{} · {} · {}",
+                    historical.library_name,
+                    historical.reference_label,
+                    historical
+                        .reference_filename
+                        .as_deref()
+                        .unwrap_or("archived submission")
+                ),
+                corpus: SourceCorpus::Historical,
+                text: historical.reference_text.clone(),
+                content_sha256,
+            });
+        }
+        for (index, passage) in historical.passages.iter().enumerate() {
+            matches.push(ReportEvidence {
+                id: format!("historical-{}-{index}", historical.reference_submission_id),
+                corpus: SourceCorpus::Historical,
+                historical_library_id: Some(historical.library_id.clone()),
+                kind: match passage.kind {
+                    analysis::PassageKind::Exact => ReportMatchKind::Exact,
+                    analysis::PassageKind::Modified => ReportMatchKind::Modified,
+                },
+                student_source_id: target_submission.id.clone(),
+                comparison_source_id: source_id.clone(),
+                student_start: passage.a_char_start,
+                student_end: passage.a_char_end,
+                comparison_start: passage.b_char_start,
+                comparison_end: passage.b_char_end,
+                tokens: passage.tokens,
+                common_text: passage.common_text,
+                coverage: historical.coverage_current,
+                exact_coverage: historical.exact_coverage_current,
+                modified_coverage: historical.modified_coverage_current,
+            });
+        }
+        for excluded in &historical.excluded {
+            let excluded_source_id = match excluded.side {
+                analysis::ExclusionSide::A => target_submission.id.as_str(),
+                analysis::ExclusionSide::B => source_id.as_str(),
+            };
+            let reason = match excluded.reason {
+                provenance_match::ExclusionReason::Prompt => "Assignment question",
+                provenance_match::ExclusionReason::Reference => "Instructor reference text",
+                provenance_match::ExclusionReason::CommonSessionText => "Common session text",
+            }
+            .to_string();
+            let key = (
+                excluded_source_id.to_string(),
+                excluded.char_start,
+                excluded.char_end,
+                reason.clone(),
+            );
+            if exclusion_keys.insert(key) {
+                exclusions.push(ReportExclusionInput {
+                    source_id: excluded_source_id.to_string(),
+                    start: excluded.char_start,
+                    end: excluded.char_end,
+                    reason,
+                    tokens: excluded.tokens,
+                });
+            }
+        }
+    }
+
+    build_report(ReportInput {
+        session_id: session.id,
+        session_name: session.name,
+        subject: session.subject,
+        target_student_id: target_student.id.clone(),
+        target_student_name: target_student.display_name.clone(),
+        target_source_id: target_submission.id.clone(),
+        generated_at: now_iso(),
+        report_mode,
+        anonymize,
+        current_comparisons,
+        historical_libraries,
+        sources,
+        overall_coverage: target_coverage.coverage,
+        exact_coverage: target_coverage.exact_coverage,
+        modified_coverage: target_coverage.modified_coverage,
+        matches,
+        exclusions,
+        engine_versions: EngineVersions {
+            fingerprint: report.fingerprint_version,
+            normalization: report.normalization_version,
+            common_text: report.common_text_version,
+            modified: report.modified_version,
+        },
+    })
+    .map_err(|error| CoreError::validation(error.to_string()))
+}
+
+fn source_label(student: &Student, filename: Option<&str>) -> String {
+    format!(
+        "{} · {}",
+        student.display_name,
+        filename.unwrap_or("submission")
+    )
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
 }
 
 #[cfg(test)]

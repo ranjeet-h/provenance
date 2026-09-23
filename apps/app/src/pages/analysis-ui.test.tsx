@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { resetInvokeImpl, resetListenImpl, setInvokeImpl, setListenImpl } from "../lib/tauri";
-import { analyzeSession, cellCoverage, cellCoverageByKind } from "../lib/analysis";
+import { analyzeSession, cellCoverage, cellCoverageByKind, generateStudentReportPdf } from "../lib/analysis";
 import {
   createFakeSessions,
   renderRouteAt,
@@ -72,6 +72,25 @@ describe("analysis API", () => {
   it("rejects malformed reports as protocol errors", async () => {
     setInvokeImpl(vi.fn(async () => ({ pairs: [] })));
     await expect(analyzeSession("sess-1")).rejects.toMatchObject({ code: "protocol" });
+  });
+
+  it("requests a named report mode and rejects malformed PDF bytes", async () => {
+    const invoke = vi.fn(async () => [37, 80, 68, 70, 45]);
+    setInvokeImpl(invoke);
+    await expect(
+      generateStudentReportPdf("sess-1", "student-1", true, "teacher"),
+    ).resolves.toEqual([37, 80, 68, 70, 45]);
+    expect(invoke).toHaveBeenCalledWith("generate_student_report_pdf", {
+      sessionId: "sess-1",
+      studentId: "student-1",
+      anonymize: true,
+      reportMode: "teacher",
+    });
+
+    setInvokeImpl(vi.fn(async () => [37, 999]));
+    await expect(
+      generateStudentReportPdf("sess-1", "student-1", false, "teacher"),
+    ).rejects.toMatchObject({ code: "protocol" });
   });
 
   it("cellCoverage picks the row student's side", () => {
@@ -212,6 +231,50 @@ describe("analysis section", () => {
     await screen.findByRole("button", { name: /amit vs priya: \d+% overlap/i });
     const zero = await screen.findByText(/0% · 0\/\d+ eligible words/i);
     expect(zero.closest("li")).toHaveTextContent(/chen/i);
+  });
+
+  it("downloads a Tauri-generated student report PDF and sends the anonymization choice", async () => {
+    const user = userEvent.setup();
+    const { invoke } = createFakeSessions(seedThreeStudents());
+    const invokeSpy = vi.fn((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "generate_student_report_pdf") {
+        return Promise.resolve([37, 80, 68, 70, 45]);
+      }
+      return invoke(cmd, args);
+    });
+    const originalCreate = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+    const originalRevoke = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
+    const createObjectURL = vi.fn(() => "blob:student-report");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    try {
+      setInvokeImpl(invokeSpy);
+      renderRouteAt("/sessions/sess-5");
+      await user.click(await screen.findByRole("button", { name: /analyze session/i }));
+      const reportButton = await screen.findByRole("button", { name: /generate evidence report for amit/i });
+      await vi.waitFor(() => expect(reportButton).toBeEnabled());
+      await user.click(screen.getByRole("checkbox", { name: /anonymize names and filenames/i }));
+      await user.click(reportButton);
+      await vi.waitFor(() => {
+        expect(invokeSpy).toHaveBeenCalledWith("generate_student_report_pdf", {
+          sessionId: "sess-5",
+          studentId: "st-a",
+          anonymize: true,
+          reportMode: "teacher",
+        });
+      });
+      expect(createObjectURL).toHaveBeenCalledOnce();
+      expect(anchorClick).toHaveBeenCalledOnce();
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:student-report");
+    } finally {
+      anchorClick.mockRestore();
+      if (originalCreate) Object.defineProperty(URL, "createObjectURL", originalCreate);
+      else Reflect.deleteProperty(URL, "createObjectURL");
+      if (originalRevoke) Object.defineProperty(URL, "revokeObjectURL", originalRevoke);
+      else Reflect.deleteProperty(URL, "revokeObjectURL");
+    }
   });
 
   it("surfaces analysis failures kindly", async () => {
