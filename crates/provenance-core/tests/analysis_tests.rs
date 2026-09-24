@@ -165,6 +165,218 @@ fn manual_overlap_pack_report_can_be_reproduced_from_checked_in_files() {
 }
 
 #[test]
+fn cross_format_fixture_reports_only_the_pdf_footer_as_an_extra_word() {
+    let (_dir, pool) = fresh_db();
+    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("manual-test-pack/formats");
+    let session = block_on(service::create_session(
+        &pool,
+        NewSession {
+            name: "Manual format test".into(),
+            subject: None,
+        },
+    ))
+    .expect("session");
+    let mut student_ids = std::collections::HashMap::new();
+    let mut canonical_texts = Vec::new();
+
+    for (name, filename) in [
+        ("Paste Sample", None),
+        ("Text Sample", Some("cross-format-passage.txt")),
+        ("Markdown Sample", Some("cross-format-passage.md")),
+        ("PDF Sample", Some("cross-format-passage.pdf")),
+        ("Word Sample", Some("cross-format-passage.docx")),
+    ] {
+        let student = block_on(service::add_student(
+            &pool,
+            &session.id,
+            NewStudent {
+                display_name: name.into(),
+            },
+        ))
+        .expect("student");
+        let plain_bytes = std::fs::read(fixture_dir.join("cross-format-passage.txt"))
+            .expect("plain text fixture");
+        if let Some(filename) = filename {
+            let bytes = std::fs::read(fixture_dir.join(filename)).expect("format fixture");
+            block_on(service::save_file_submission(
+                &pool,
+                &student.id,
+                Some(filename.into()),
+                &bytes,
+            ))
+            .expect("save imported file");
+        } else {
+            block_on(service::save_text_submission(
+                &pool,
+                &student.id,
+                SourceType::PastedText,
+                None,
+                &plain_bytes,
+            ))
+            .expect("save pasted text");
+        }
+        let submission =
+            block_on(service::get_submission(&pool, &student.id)).expect("load saved submission");
+        let canonical: Vec<String> = provenance_match::canonicalize(&submission.original_text)
+            .tokens
+            .into_iter()
+            .map(|token| token.normalized)
+            .collect();
+        canonical_texts.push((name, canonical));
+        student_ids.insert(name, student.id);
+    }
+
+    let expected = &canonical_texts[0].1;
+    for (name, tokens) in canonical_texts
+        .iter()
+        .filter(|(name, _)| *name != "PDF Sample")
+    {
+        assert_eq!(tokens, expected, "canonical input differs for {name}");
+    }
+    let pdf_tokens = &canonical_texts
+        .iter()
+        .find(|(name, _)| *name == "PDF Sample")
+        .expect("PDF canonical text")
+        .1;
+    assert_eq!(pdf_tokens.len(), expected.len() + 1);
+    assert_eq!(&pdf_tokens[..expected.len()], expected);
+    assert_eq!(pdf_tokens.last().map(String::as_str), Some("1"));
+
+    let report = block_on(analysis::analyze_session_exact(&pool, &session.id))
+        .expect("analyze cross-format fixture");
+    assert_eq!(report.pairs.len(), 10, "five submissions produce ten pairs");
+    assert!(report.pairs.iter().all(|pair| {
+        !pair.passages.is_empty()
+            && pair
+                .passages
+                .iter()
+                .all(|passage| passage.kind == analysis::PassageKind::Exact)
+    }));
+    let pdf_id = &student_ids["PDF Sample"];
+    let pdf_row = report
+        .per_student
+        .iter()
+        .find(|row| &row.student_id == pdf_id)
+        .expect("PDF row");
+    assert_eq!(pdf_row.eligible_tokens, 79);
+    assert_eq!(pdf_row.matched_tokens, 78);
+    assert!((pdf_row.coverage.unwrap() - (78.0 / 79.0 * 100.0)).abs() < 0.001);
+    for row in &report.per_student {
+        if row.student_id != *pdf_id {
+            assert_eq!(row.eligible_tokens, 78);
+            assert_eq!(row.matched_tokens, 78);
+            assert_eq!(row.coverage, Some(100.0));
+        }
+    }
+    for pair in &report.pairs {
+        let (coverage_pdf, coverage_peer) = if pair.a_student_id == *pdf_id {
+            (pair.coverage_a, pair.coverage_b)
+        } else if pair.b_student_id == *pdf_id {
+            (pair.coverage_b, pair.coverage_a)
+        } else {
+            assert_eq!(pair.coverage_a, Some(100.0));
+            assert_eq!(pair.coverage_b, Some(100.0));
+            continue;
+        };
+        assert!((coverage_pdf.unwrap() - (78.0 / 79.0 * 100.0)).abs() < 0.001);
+        assert_eq!(coverage_peer, Some(100.0));
+    }
+}
+
+#[test]
+fn saved_analysis_keeps_unlocked_session_editable_and_invalidates_old_result_after_edits() {
+    let (_dir, pool) = fresh_db();
+    let session = block_on(service::create_session(
+        &pool,
+        NewSession {
+            name: "Editable analysis lifecycle".into(),
+            subject: None,
+        },
+    ))
+    .expect("session");
+    let student_a = block_on(service::add_student(
+        &pool,
+        &session.id,
+        NewStudent {
+            display_name: "A".into(),
+        },
+    ))
+    .expect("student A");
+    let student_b = block_on(service::add_student(
+        &pool,
+        &session.id,
+        NewStudent {
+            display_name: "B".into(),
+        },
+    ))
+    .expect("student B");
+    block_on(service::save_text_submission(
+        &pool,
+        &student_a.id,
+        SourceType::PastedText,
+        None,
+        b"A shared passage can be reviewed while a session remains open for teacher corrections.",
+    ))
+    .expect("submission A");
+    block_on(service::save_text_submission(
+        &pool,
+        &student_b.id,
+        SourceType::PastedText,
+        None,
+        b"A shared passage can be reviewed while a session remains open for teacher corrections.",
+    ))
+    .expect("submission B");
+
+    let digest = block_on(analysis::session_analysis_input_hash(&pool, &session.id))
+        .expect("analysis digest");
+    let report =
+        block_on(analysis::analyze_session_exact(&pool, &session.id)).expect("analysis result");
+    block_on(storage::AnalysisRepo::save_result(
+        &pool,
+        &session.id,
+        &digest,
+        &serde_json::to_string(&report).expect("serialize report"),
+    ))
+    .expect("persist report");
+
+    assert_eq!(
+        block_on(service::get_session(&pool, &session.id))
+            .expect("session remains available")
+            .status,
+        provenance_core::domain::SessionStatus::Draft,
+        "analysis is saved independently from the editable/unlocked lifecycle state"
+    );
+    assert!(block_on(storage::AnalysisRepo::result_for_input(
+        &pool,
+        &session.id,
+        &digest
+    ))
+    .expect("current result lookup")
+    .is_some());
+
+    block_on(service::save_text_submission(
+        &pool,
+        &student_b.id,
+        SourceType::PastedText,
+        None,
+        b"The teacher corrected the submitted text after reviewing the analysis.",
+    ))
+    .expect("unlocked session remains editable");
+    let changed_digest = block_on(analysis::session_analysis_input_hash(&pool, &session.id))
+        .expect("updated analysis digest");
+    assert_ne!(digest, changed_digest);
+    assert!(block_on(storage::AnalysisRepo::result_for_input(
+        &pool,
+        &session.id,
+        &changed_digest
+    ))
+    .expect("updated result lookup")
+    .is_none());
+}
+
+#[test]
 fn three_way_session_flags_only_the_copied_pair() {
     let (_dir, pool) = fresh_db();
     let (session, a, b, c) = setup_session(&pool);

@@ -33,12 +33,12 @@ The fixture is designed to exercise those cases; scores and displayed boundaries
 
 ## 3. Test each supported file-import format
 
-This separate session checks that the same selectable text survives pasted text, TXT, Markdown, digital PDF, and DOCX imports.
+This separate session checks that the same selectable body text survives pasted text, TXT, Markdown, digital PDF, and DOCX imports. The generated one-page PDF contains a printed page-number footer (`1`); the PDF import preserves that selectable text, so its row is expected to score 99% (78/79 words) while the reverse direction and all other pairs score 100%.
 
 1. Create a session named `Manual format test` and add five students named `Paste Sample`, `Text Sample`, `Markdown Sample`, `PDF Sample`, and `Word Sample`.
 2. For Paste Sample, choose **Paste text** and paste the title and paragraph from `manual-test-pack/formats/cross-format-passage.txt`.
 3. For the other students, upload the matching `.txt`, `.md`, `.pdf`, and `.docx` files from `manual-test-pack/formats/`.
-4. Analyze the session. All five inputs intentionally contain the same text, so each pair should show the same exact shared passage. Compare the highlighted text and confirm the imported content is readable and equivalent across all five input methods.
+4. Analyze the session. All five inputs contain the same title and body passage, so each pair should show the same exact shared passage. Expect the PDF's extra footer token to lower only its directional row to 99%; remove that footer from a separately prepared PDF if testing strict token-for-token parity. Compare the highlighted body text and confirm the imported content is readable across all five input methods.
 5. If an input is rejected, imported as blank, or produces different text, note the filename/method and the app's exact message. The PDF in this pack has a real text layer; it is not a scan or image.
 
 ## 4. Exercise local reference-library export/import
