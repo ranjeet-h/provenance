@@ -1,6 +1,7 @@
 // Provenance Tauri shell: thin command adapters over provenance-core.
 // Business behavior lives in the core crates; this file only adapts the IPC boundary.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -19,6 +20,7 @@ use provenance_report::signature::{
 };
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 use zeroize::Zeroize;
 
 struct DbState(SqlitePool);
@@ -522,6 +524,115 @@ async fn generate_student_report_pdf(
         .map_err(CommandError::from)
 }
 
+fn save_report_files_to_path(
+    selected_path: Option<PathBuf>,
+    pdf_bytes: &[u8],
+    companion_json: Option<&str>,
+) -> Result<Option<PathBuf>, CommandError> {
+    let Some(mut pdf_path) = selected_path else {
+        return Ok(None);
+    };
+    if pdf_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map_or(true, |ext| !ext.eq_ignore_ascii_case("pdf"))
+    {
+        pdf_path.set_extension("pdf");
+    }
+    if !pdf_bytes.starts_with(b"%PDF-") {
+        return Err(CommandError {
+            code: "protocol",
+            message: "The generated report is not a valid PDF.".into(),
+        });
+    }
+
+    let companion_path = pdf_path.with_extension("json");
+    let mut companion_created = false;
+    if let Some(json) = companion_json {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&companion_path)
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    CommandError {
+                        code: "conflict",
+                        message: "A verification JSON file already exists beside that PDF. Choose a different filename or location.".into(),
+                    }
+                } else {
+                    CommandError {
+                        code: "filesystem",
+                        message: format!("Could not save the verification JSON: {error}"),
+                    }
+                }
+            })?;
+        companion_created = true;
+        if let Err(error) = file.write_all(json.as_bytes()) {
+            drop(file);
+            let _ = std::fs::remove_file(&companion_path);
+            return Err(CommandError {
+                code: "filesystem",
+                message: format!("Could not save the verification JSON: {error}"),
+            });
+        }
+    }
+
+    if let Err(error) = std::fs::write(&pdf_path, pdf_bytes) {
+        if companion_created {
+            let _ = std::fs::remove_file(&companion_path);
+        }
+        return Err(CommandError {
+            code: "filesystem",
+            message: format!("Could not save the PDF report: {error}"),
+        });
+    }
+    Ok(Some(pdf_path))
+}
+
+#[tauri::command]
+async fn save_report_files(
+    app: AppHandle,
+    pdf_bytes: Vec<u8>,
+    suggested_file_name: String,
+    companion_json: Option<String>,
+) -> Result<Option<String>, CommandError> {
+    let suggested_path = Path::new(&suggested_file_name);
+    let safe_name = suggested_path.file_name().and_then(|name| name.to_str())
+        == Some(suggested_file_name.as_str())
+        && !suggested_file_name.is_empty()
+        && suggested_file_name.len() <= 180
+        && !suggested_file_name.contains(['/', '\\'])
+        && !suggested_file_name.chars().any(char::is_control)
+        && suggested_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"));
+    if !safe_name {
+        return Err(CommandError {
+            code: "validation",
+            message: "The suggested report filename is invalid.".into(),
+        });
+    }
+
+    let selected_path = app
+        .dialog()
+        .file()
+        .set_title("Save report")
+        .set_file_name(suggested_file_name)
+        .add_filter("PDF document", &["pdf"])
+        .blocking_save_file()
+        .map(|path| path.into_path())
+        .transpose()
+        .map_err(|_| CommandError {
+            code: "filesystem",
+            message: "The selected save location is not available on this device.".into(),
+        })?;
+
+    let saved_path =
+        save_report_files_to_path(selected_path, &pdf_bytes, companion_json.as_deref())?;
+    Ok(saved_path.map(|path| path.to_string_lossy().into_owned()))
+}
+
 #[tauri::command]
 async fn lock_session(
     db: State<'_, DbState>,
@@ -616,6 +727,7 @@ fn inspect_text(text: String) -> Result<provenance_match::CanonicalDocument, Com
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir().map_err(|e| {
                 Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
@@ -646,6 +758,7 @@ pub fn run() {
             analyze_session,
             get_session_analysis,
             generate_student_report_pdf,
+            save_report_files,
             lock_session,
             get_session_lock,
             generate_certified_student_report,
@@ -696,6 +809,67 @@ mod tests {
         // Serializable for the IPC boundary.
         let json = serde_json::to_string(&locked).expect("serialize");
         assert!(json.contains("\"code\":\"locked\""));
+    }
+
+    #[test]
+    fn cancelling_report_save_writes_nothing() {
+        let base = tempfile::tempdir().expect("temp directory");
+        let saved = save_report_files_to_path(None, b"%PDF-1.7 test", None)
+            .expect("cancellation is not an error");
+        assert_eq!(saved, None);
+        assert_eq!(
+            std::fs::read_dir(base.path()).expect("directory").count(),
+            0
+        );
+    }
+
+    #[test]
+    fn report_save_writes_pdf_and_verification_json_beside_it() {
+        let base = tempfile::tempdir().expect("temp directory");
+        let selected = base.path().join("teacher-report.pdf");
+        let saved = save_report_files_to_path(
+            Some(selected.clone()),
+            b"%PDF-1.7 test report",
+            Some("{\"schema_version\":1}"),
+        )
+        .expect("save report files")
+        .expect("selected location");
+
+        assert_eq!(saved, selected);
+        assert_eq!(
+            std::fs::read(&saved).expect("PDF bytes"),
+            b"%PDF-1.7 test report"
+        );
+        assert_eq!(
+            std::fs::read_to_string(saved.with_extension("json")).expect("JSON sidecar"),
+            "{\"schema_version\":1}"
+        );
+    }
+
+    #[test]
+    fn report_save_does_not_overwrite_an_existing_verification_json() {
+        let base = tempfile::tempdir().expect("temp directory");
+        let selected = base.path().join("teacher-report.pdf");
+        let sidecar = selected.with_extension("json");
+        std::fs::write(&selected, b"existing PDF").expect("existing PDF");
+        std::fs::write(&sidecar, b"existing JSON").expect("existing JSON");
+
+        let error = save_report_files_to_path(
+            Some(selected.clone()),
+            b"%PDF-1.7 new report",
+            Some("new JSON"),
+        )
+        .expect_err("existing sidecar must be preserved");
+
+        assert_eq!(error.code, "conflict");
+        assert_eq!(
+            std::fs::read(&selected).expect("PDF remains"),
+            b"existing PDF"
+        );
+        assert_eq!(
+            std::fs::read(&sidecar).expect("JSON remains"),
+            b"existing JSON"
+        );
     }
 
     #[test]

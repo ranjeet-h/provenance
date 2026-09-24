@@ -92,7 +92,9 @@ export const HistoricalPairAnalysisSchema = z.object({
   excluded: z.array(ExcludedEvidenceSchema),
 });
 
-export type HistoricalPairAnalysis = z.infer<typeof HistoricalPairAnalysisSchema>;
+export type HistoricalPairAnalysis = z.infer<
+  typeof HistoricalPairAnalysisSchema
+>;
 
 export const ExactAnalysisSchema = z.object({
   fingerprint_version: z.number(),
@@ -153,12 +155,17 @@ export async function analyzeSession(
   }
   const parsed = ExactAnalysisSchema.safeParse(raw);
   if (!parsed.success) {
-    throw { code: "protocol", message: "Unexpected response from the app core." };
+    throw {
+      code: "protocol",
+      message: "Unexpected response from the app core.",
+    };
   }
   return parsed.data;
 }
 
-export async function loadSessionAnalysis(sessionId: string): Promise<ExactAnalysis | null> {
+export async function loadSessionAnalysis(
+  sessionId: string,
+): Promise<ExactAnalysis | null> {
   let raw: unknown;
   try {
     raw = await getInvokeImpl()("get_session_analysis", { sessionId });
@@ -168,7 +175,10 @@ export async function loadSessionAnalysis(sessionId: string): Promise<ExactAnaly
   if (raw === null) return null;
   const parsed = ExactAnalysisSchema.safeParse(raw);
   if (!parsed.success) {
-    throw { code: "protocol", message: "Unexpected response from the app core." };
+    throw {
+      code: "protocol",
+      message: "Unexpected response from the app core.",
+    };
   }
   return parsed.data;
 }
@@ -194,8 +204,45 @@ export async function generateStudentReportPdf(
     throw asSessionsError(err);
   }
   const parsed = z.array(z.number().int().min(0).max(255)).safeParse(raw);
-  if (!parsed.success || parsed.data.length < 5 || parsed.data[0] !== 37 || parsed.data[1] !== 80 || parsed.data[2] !== 68 || parsed.data[3] !== 70 || parsed.data[4] !== 45) {
-    throw { code: "protocol", message: "The app core did not return a valid PDF report." };
+  if (
+    !parsed.success ||
+    parsed.data.length < 5 ||
+    parsed.data[0] !== 37 ||
+    parsed.data[1] !== 80 ||
+    parsed.data[2] !== 68 ||
+    parsed.data[3] !== 70 ||
+    parsed.data[4] !== 45
+  ) {
+    throw {
+      code: "protocol",
+      message: "The app core did not return a valid PDF report.",
+    };
+  }
+  return parsed.data;
+}
+
+/** Save a generated report through the native Tauri file picker. A null path means the user canceled. */
+export async function saveReportFiles(
+  pdfBytes: number[],
+  suggestedFileName: string,
+  companionJson?: string,
+): Promise<string | null> {
+  let raw: unknown;
+  try {
+    raw = await getInvokeImpl()("save_report_files", {
+      pdfBytes,
+      suggestedFileName,
+      companionJson: companionJson ?? null,
+    });
+  } catch (err) {
+    throw asSessionsError(err);
+  }
+  const parsed = z.string().min(1).nullable().safeParse(raw);
+  if (!parsed.success) {
+    throw {
+      code: "protocol",
+      message: "The app core did not return a valid report save location.",
+    };
   }
   return parsed.data;
 }
@@ -204,7 +251,9 @@ const PdfBytesSchema = z.array(z.number().int().min(0).max(255));
 const CertifiedStudentReportShapeSchema = z.object({
   schema_version: z.literal(1),
   lock_sha256: z.string().regex(/^[a-f0-9]{64}$/),
-  report: z.object({ payload: z.object({ report_mode: z.literal("teacher") }) }),
+  report: z.object({
+    payload: z.object({ report_mode: z.literal("teacher") }),
+  }),
   signature: z.object({
     algorithm: z.literal("Ed25519"),
     key_id: z.string().regex(/^[a-f0-9]{64}$/),
@@ -233,25 +282,46 @@ export async function generateCertifiedStudentReport(
   } catch (err) {
     throw asSessionsError(err);
   }
-  const result = z.object({
-    pdf_bytes: PdfBytesSchema,
-    signed_report_json: z.string().min(1),
-  }).safeParse(raw);
+  const result = z
+    .object({
+      pdf_bytes: PdfBytesSchema,
+      signed_report_json: z.string().min(1),
+    })
+    .safeParse(raw);
   if (!result.success) {
-    throw { code: "protocol", message: "The app core did not return a complete signed report." };
+    throw {
+      code: "protocol",
+      message: "The app core did not return a complete signed report.",
+    };
   }
   const pdf = result.data.pdf_bytes;
-  if (pdf.length < 5 || pdf[0] !== 37 || pdf[1] !== 80 || pdf[2] !== 68 || pdf[3] !== 70 || pdf[4] !== 45) {
-    throw { code: "protocol", message: "The app core did not return a valid certified PDF." };
+  if (
+    pdf.length < 5 ||
+    pdf[0] !== 37 ||
+    pdf[1] !== 80 ||
+    pdf[2] !== 68 ||
+    pdf[3] !== 70 ||
+    pdf[4] !== 45
+  ) {
+    throw {
+      code: "protocol",
+      message: "The app core did not return a valid certified PDF.",
+    };
   }
   let envelope: unknown;
   try {
     envelope = JSON.parse(result.data.signed_report_json);
   } catch {
-    throw { code: "protocol", message: "The app core returned invalid signed report JSON." };
+    throw {
+      code: "protocol",
+      message: "The app core returned invalid signed report JSON.",
+    };
   }
   if (!CertifiedStudentReportShapeSchema.safeParse(envelope).success) {
-    throw { code: "protocol", message: "The app core returned an incomplete signed report certificate." };
+    throw {
+      code: "protocol",
+      message: "The app core returned an incomplete signed report certificate.",
+    };
   }
   return { pdfBytes: pdf, signedReportJson: result.data.signed_report_json };
 }
@@ -264,25 +334,29 @@ const SignatureVerificationSchema = z.object({
 
 export type SignatureVerification = z.infer<typeof SignatureVerificationSchema>;
 
-export async function verifyCertifiedStudentReport(reportJson: string): Promise<SignatureVerification> {
+export async function verifyCertifiedStudentReport(
+  reportJson: string,
+): Promise<SignatureVerification> {
   let raw: unknown;
   try {
-    raw = await getInvokeImpl()("verify_certified_student_report", { reportJson });
+    raw = await getInvokeImpl()("verify_certified_student_report", {
+      reportJson,
+    });
   } catch (err) {
     throw asSessionsError(err);
   }
   const parsed = SignatureVerificationSchema.safeParse(raw);
   if (!parsed.success) {
-    throw { code: "protocol", message: "Unexpected response from report verification." };
+    throw {
+      code: "protocol",
+      message: "Unexpected response from report verification.",
+    };
   }
   return parsed.data;
 }
 
 /** Coverage of the row student against the column student in a pair. */
-export function cellCoverage(
-  pair: PairAnalysis,
-  rowId: string,
-): number | null {
+export function cellCoverage(pair: PairAnalysis, rowId: string): number | null {
   if (pair.a_student_id === rowId) return pair.coverage_a;
   if (pair.b_student_id === rowId) return pair.coverage_b;
   return null;

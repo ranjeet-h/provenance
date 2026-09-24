@@ -1,5 +1,10 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -9,7 +14,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { cn } from "@/lib/utils";
 import {
   asSessionsError,
   MAX_UPLOAD_BYTES,
@@ -37,7 +41,9 @@ async function decodeTextFile(file: File): Promise<string> {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    throw new Error(`"${file.name}" could not be read as text. Only TXT and Markdown files are supported.`);
+    throw new Error(
+      `"${file.name}" could not be read as text. Only TXT and Markdown files are supported.`,
+    );
   }
 }
 
@@ -96,7 +102,9 @@ export function SubmissionDialog({
         setText(await decodeTextFile(chosen));
       } catch (err) {
         setText("");
-        setError(err instanceof Error ? err.message : "Could not read that file.");
+        setError(
+          err instanceof Error ? err.message : "Could not read that file.",
+        );
       }
     } else {
       setText("");
@@ -111,9 +119,7 @@ export function SubmissionDialog({
     // Fast client-side guard (the Rust core re-enforces the same limit):
     // never send an oversized upload over IPC.
     if (file.size > MAX_UPLOAD_BYTES) {
-      setError(
-        `File is too large (max ${MAX_UPLOAD_BYTES / 1_000_000} MB).`,
-      );
+      setError(`File is too large (max ${MAX_UPLOAD_BYTES / 1_000_000} MB).`);
       return;
     }
     setSaving(true);
@@ -141,7 +147,12 @@ export function SubmissionDialog({
     }
     setSaving(true);
     try {
-      await saveTextSubmission({ studentId, sourceType: "pasted_text", filename: null, text });
+      await saveTextSubmission({
+        studentId,
+        sourceType: "pasted_text",
+        filename: null,
+        text,
+      });
       onOpenChange(false);
       onSaved();
     } catch (err) {
@@ -152,75 +163,73 @@ export function SubmissionDialog({
   }
 
   const preview = text.slice(0, PREVIEW_CHARS);
-  const showPreview = mode === "paste" || (file !== null && isPreviewableText(fileName ?? ""));
+  const showPreview =
+    mode === "paste" || (file !== null && isPreviewableText(fileName ?? ""));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent className="max-h-[92vh] overflow-y-auto rounded-2xl p-5 shadow-2xl sm:max-w-2xl sm:p-7">
+      <DialogContent className="max-h-[92vh] overflow-y-auto p-5 sm:max-w-2xl sm:p-7">
         <DialogHeader>
           <DialogTitle>
-            {existing ? `Replace submission — ${studentName}` : `Add submission — ${studentName}`}
+            {existing
+              ? `Replace submission — ${studentName}`
+              : `Add submission — ${studentName}`}
           </DialogTitle>
           <DialogDescription>
-            Paste text or upload a TXT, Markdown, PDF, or Word file. Saved on this device only.
+            Paste text or upload a TXT, Markdown, PDF, or Word file. Saved on
+            this device only.
           </DialogDescription>
         </DialogHeader>
 
-        <div role="group" aria-label="Input method" className="inline-flex w-fit rounded-xl border border-border/80 bg-muted/40 p-1">
-          {(["paste", "upload"] as const).map((m) => (
-            <Button
-              key={m}
-              type="button"
-              variant={mode === m ? "default" : "ghost"}
-              size="sm"
-              aria-pressed={mode === m}
-              className={mode === m ? "shadow-sm" : "text-muted-foreground"}
-              onClick={() => {
-                setMode(m);
-                setError(null);
-              }}
-            >
-              {m === "paste" ? "Paste text" : "Upload file"}
-            </Button>
-          ))}
-        </div>
-
-        {mode === "paste" ? (
-          <div className="space-y-1">
-            <label htmlFor={`submission-text-${studentId}`} className="text-sm font-medium">
+        <Tabs
+          value={mode}
+          onValueChange={(value) => {
+            setMode(value as "paste" | "upload");
+            setError(null);
+          }}
+          className="w-full"
+        >
+          <TabsList aria-label="Input method">
+            <TabsTrigger value="paste">Paste text</TabsTrigger>
+            <TabsTrigger value="upload">Upload file</TabsTrigger>
+          </TabsList>
+          <TabsContent value="paste" className="space-y-2">
+            <Label htmlFor={`submission-text-${studentId}`}>
               Submission text
-            </label>
-            <textarea
+            </Label>
+            <Textarea
               id={`submission-text-${studentId}`}
               rows={8}
               value={text}
               onChange={(e) => setText(e.currentTarget.value)}
               placeholder="Paste the assignment text here…"
-              className={cn(
-                "flex min-h-[180px] w-full rounded-xl border border-input bg-background px-3 py-3 text-sm leading-relaxed shadow-sm shadow-slate-900/[0.02]",
-                "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              )}
+              aria-invalid={error !== null}
+              className="min-h-[180px] leading-relaxed"
             />
-          </div>
-        ) : (
-          <div className="space-y-1">
-            <label htmlFor={`submission-file-${studentId}`} className="text-sm font-medium">
+          </TabsContent>
+          <TabsContent value="upload" className="space-y-2">
+            <Label htmlFor={`submission-file-${studentId}`}>
               Assignment file
-            </label>
-            <input
+            </Label>
+            <Input
               id={`submission-file-${studentId}`}
               type="file"
               accept=".txt,.md,.markdown,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
               onChange={(e) => void onFileChosen(e.currentTarget.files?.[0])}
-              className="block w-full rounded-xl border border-dashed border-border bg-muted/20 p-3 text-sm file:mr-3 file:rounded-lg file:border file:border-input file:bg-background file:px-3 file:py-2 file:text-sm file:font-medium hover:file:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-auto border-dashed bg-muted/20 p-3 text-sm file:mr-3 file:rounded-md file:border file:border-input file:bg-background file:px-3 file:py-2 file:text-sm file:font-medium hover:file:bg-muted"
             />
-            <p className="text-xs leading-relaxed text-muted-foreground">Supported: TXT, Markdown, digital PDF, and DOCX. Scanned or image-only files are not supported.</p>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Supported: TXT, Markdown, digital PDF, and DOCX. Scanned or
+              image-only files are not supported.
+            </p>
             {fileName ? (
-              <p className="text-sm text-muted-foreground">Selected: {fileName}</p>
+              <p className="text-sm text-muted-foreground">
+                Selected: {fileName}
+              </p>
             ) : null}
-          </div>
-        )}
+          </TabsContent>
+        </Tabs>
 
         <div className="space-y-1">
           <h3 className="text-sm font-semibold">Preview</h3>
@@ -228,7 +237,7 @@ export function SubmissionDialog({
             preview !== "" ? (
               <pre
                 aria-label="Submission preview"
-                className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-xl border border-border/80 bg-muted/35 p-3.5 text-sm leading-relaxed"
+                className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-md border border-border/80 bg-muted/35 p-3.5 text-sm leading-relaxed"
               >
                 {preview}
                 {text.length > PREVIEW_CHARS ? (
@@ -238,7 +247,9 @@ export function SubmissionDialog({
                 ) : null}
               </pre>
             ) : (
-              <p className="text-sm text-muted-foreground">Nothing to preview yet.</p>
+              <p className="text-sm text-muted-foreground">
+                Nothing to preview yet.
+              </p>
             )
           ) : (
             <p className="text-sm text-muted-foreground">
@@ -250,14 +261,28 @@ export function SubmissionDialog({
         </div>
 
         {error ? (
-          <p role="alert" className="text-sm text-destructive">{error}</p>
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         ) : null}
         <DialogFooter className="flex-col-reverse gap-2 border-t border-border/70 pt-4 sm:flex-row sm:gap-2 sm:pt-5">
-          <Button className="w-full sm:w-auto" variant="outline" onClick={() => onOpenChange(false)}>
+          <Button
+            className="w-full sm:w-auto"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+          >
             Cancel
           </Button>
-          <Button className="w-full sm:w-auto" onClick={() => void onSave()} disabled={saving}>
-            {saving ? "Saving…" : existing ? "Replace submission" : "Save submission"}
+          <Button
+            className="w-full sm:w-auto"
+            onClick={() => void onSave()}
+            disabled={saving}
+          >
+            {saving
+              ? "Saving…"
+              : existing
+                ? "Replace submission"
+                : "Save submission"}
           </Button>
         </DialogFooter>
       </DialogContent>

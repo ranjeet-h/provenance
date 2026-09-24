@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { resetInvokeImpl, setInvokeImpl } from "./lib/tauri";
-import { createFakeSessions, renderRouteAt, sessionFixture } from "./test-utils";
+import {
+  createFakeSessions,
+  renderRouteAt,
+  sessionFixture,
+} from "./test-utils";
 
 function renderAt(path: string, seedSessions = false) {
   const seed = seedSessions
@@ -49,17 +53,27 @@ describe("Phase 1 routes", () => {
   it("renders reference libraries empty state", async () => {
     renderAt("/reference-libraries");
     expect(
-      await screen.findByRole("heading", { name: /^reference libraries$/i, level: 1 }),
+      await screen.findByRole("heading", {
+        name: /^reference libraries$/i,
+        level: 1,
+      }),
     ).toBeInTheDocument();
-    expect(await screen.findByText(/no reference libraries yet/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/no reference libraries yet/i),
+    ).toBeInTheDocument();
   });
 
-  it("renders settings diagnostics", async () => {
+  it("renders local storage and supported text-source settings", async () => {
     renderAt("/settings");
     expect(
       await screen.findByRole("heading", { name: /settings/i }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText(/your name/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /stored on this device/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("list", { name: /supported input types/i }),
+    ).toBeInTheDocument();
   });
 
   it("renders not-found page for unknown route", async () => {
@@ -89,9 +103,7 @@ describe("Primary navigation", () => {
     await screen.findByRole("heading", { name: /^provenance$/i });
     const nav = screen.getByRole("navigation", { name: /primary/i });
     await user.click(within(nav).getByRole("link", { name: /sessions/i }));
-    expect(
-      await screen.findByText(/no sessions yet/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/no sessions yet/i)).toBeInTheDocument();
   });
 
   it("supports keyboard navigation (Tab + Enter)", async () => {
@@ -103,9 +115,7 @@ describe("Primary navigation", () => {
     sessionsLink.focus();
     expect(sessionsLink).toHaveFocus();
     await user.keyboard("{Enter}");
-    expect(
-      await screen.findByText(/no sessions yet/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/no sessions yet/i)).toBeInTheDocument();
   });
 
   it("exposes accessible names for all nav landmarks", async () => {

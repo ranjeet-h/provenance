@@ -5,8 +5,11 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { PageHeader } from "@/components/common/PageHeader";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { createSession, type SessionsError } from "@/lib/sessions";
 import { cn } from "@/lib/utils";
 
@@ -44,12 +47,20 @@ export function NewSessionPage() {
     try {
       const session = await createSession({
         name: values.name,
-        subject: values.subject !== undefined && values.subject !== "" ? values.subject : null,
+        subject:
+          values.subject !== undefined && values.subject !== ""
+            ? values.subject
+            : null,
       });
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      await navigate({ to: "/sessions/$sessionId", params: { sessionId: session.id } });
+      await navigate({
+        to: "/sessions/$sessionId",
+        params: { sessionId: session.id },
+      });
     } catch (err) {
-      setSubmitError((err as SessionsError).message ?? "Could not create the session.");
+      setSubmitError(
+        (err as SessionsError).message ?? "Could not create the session.",
+      );
     }
   }
 
@@ -60,55 +71,67 @@ export function NewSessionPage() {
         title="New session"
         description="Start an assignment workspace. You can add students, paste text, or import supported digital documents next."
       />
-      <form
-        aria-label="New session"
-        className="max-w-2xl rounded-2xl border border-border/80 bg-card p-5 shadow-sm shadow-slate-900/[0.025] sm:p-7"
-        onSubmit={(e) => {
-          void handleSubmit(onSubmit)(e);
-        }}
-      >
-        <div className="space-y-2">
-          <label htmlFor="session-name" className="text-sm font-semibold">
-            Assignment name
-          </label>
-          <Input
-            id="session-name"
-            placeholder="e.g. Biology · Cell structure"
-            aria-invalid={errors.name ? true : undefined}
-            className={cn(errors.name && "border-destructive")}
-            {...register("name")}
-          />
-          {errors.name ? <p role="alert" className="text-sm text-destructive">{errors.name.message}</p> : null}
-          <p className="text-xs leading-relaxed text-muted-foreground">Choose a name you will recognize in your assignment list.</p>
-        </div>
-        <div className="mt-6 space-y-2">
-          <label htmlFor="session-subject" className="text-sm font-semibold">
-            Subject <span className="text-muted-foreground">(optional)</span>
-          </label>
-          <Input
-            id="session-subject"
-            placeholder="e.g. Biology"
-            aria-invalid={errors.subject ? true : undefined}
-            className={cn(errors.subject && "border-destructive")}
-            {...register("subject")}
-          />
-          {errors.subject ? (
-            <p role="alert" className="text-sm text-destructive">{errors.subject.message}</p>
+      <Card className="max-w-2xl p-0">
+        <form
+          aria-label="New session"
+          className="p-5 sm:p-7"
+          onSubmit={(e) => {
+            void handleSubmit(onSubmit)(e);
+          }}
+        >
+          <div className="space-y-2">
+            <Label htmlFor="session-name">Assignment name</Label>
+            <Input
+              id="session-name"
+              placeholder="e.g. Biology · Cell structure"
+              aria-invalid={errors.name ? true : undefined}
+              className={cn(errors.name && "border-destructive")}
+              {...register("name")}
+            />
+            {errors.name ? (
+              <p role="alert" className="text-sm text-destructive">
+                {errors.name.message}
+              </p>
+            ) : null}
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Choose a name you will recognize in your assignment list.
+            </p>
+          </div>
+          <div className="mt-6 space-y-2">
+            <Label htmlFor="session-subject">
+              Subject <span className="text-muted-foreground">(optional)</span>
+            </Label>
+            <Input
+              id="session-subject"
+              placeholder="e.g. Biology"
+              aria-invalid={errors.subject ? true : undefined}
+              className={cn(errors.subject && "border-destructive")}
+              {...register("subject")}
+            />
+            {errors.subject ? (
+              <p role="alert" className="text-sm text-destructive">
+                {errors.subject.message}
+              </p>
+            ) : null}
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Used as a label to help distinguish assignments.
+            </p>
+          </div>
+          {submitError ? (
+            <Alert variant="destructive" className="mt-6">
+              <AlertDescription>{submitError}</AlertDescription>
+            </Alert>
           ) : null}
-          <p className="text-xs leading-relaxed text-muted-foreground">Used as a label to help distinguish assignments.</p>
-        </div>
-        {submitError ? (
-          <p role="alert" className="text-sm text-destructive">{submitError}</p>
-        ) : null}
-        <div className="mt-7 flex flex-col-reverse gap-2 border-t border-border/70 pt-5 sm:flex-row sm:justify-end">
-          <Button asChild variant="ghost">
-            <Link to="/sessions">Cancel</Link>
-          </Button>
-          <Button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Creating…" : "Create session"}
-          </Button>
-        </div>
-      </form>
+          <div className="mt-7 flex flex-col-reverse gap-2 border-t border-border/70 pt-5 sm:flex-row sm:justify-end">
+            <Button asChild variant="ghost">
+              <Link to="/sessions">Cancel</Link>
+            </Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? "Creating…" : "Create session"}
+            </Button>
+          </div>
+        </form>
+      </Card>
     </div>
   );
 }

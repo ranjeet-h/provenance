@@ -1,6 +1,10 @@
 import * as React from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { Trash2, UserPlus } from "lucide-react";
 import { PageHeader } from "@/components/common/PageHeader";
 import { EmptyState } from "@/components/common/EmptyState";
@@ -10,9 +14,13 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { AnalysisSection } from "@/components/analysis/AnalysisSection";
 import { SubmissionDialog } from "@/components/submissions/SubmissionDialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import {
   archiveCompletedSession,
   listReferenceLibraries,
@@ -32,7 +40,10 @@ import {
   type Session,
 } from "@/lib/sessions";
 
-async function invalidateAnalysisReport(queryClient: QueryClient, sessionId: string): Promise<void> {
+async function invalidateAnalysisReport(
+  queryClient: QueryClient,
+  sessionId: string,
+): Promise<void> {
   const queryKey = ["analysis", sessionId] as const;
   await queryClient.cancelQueries({ queryKey });
   queryClient.setQueryData(queryKey, null);
@@ -53,7 +64,9 @@ function RenameSessionForm({ session }: { session: Session }) {
     }
     try {
       await updateSession(session.id, { name: rename });
-      await queryClient.invalidateQueries({ queryKey: ["session", session.id] });
+      await queryClient.invalidateQueries({
+        queryKey: ["session", session.id],
+      });
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });
     } catch (err) {
       setRenameError(asSessionsError(err).message);
@@ -61,13 +74,24 @@ function RenameSessionForm({ session }: { session: Session }) {
   }
 
   if (session.status === "locked") {
-    return <p className="mt-4 rounded-xl border border-border/80 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">Session name is frozen by its signed lock.</p>;
+    return (
+      <p className="mt-4 rounded-md border border-border/80 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+        Session name is frozen by its signed lock.
+      </p>
+    );
   }
 
   return (
-    <section aria-label="Rename session" className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm shadow-slate-900/[0.02] sm:p-5">
+    <Card
+      role="region"
+      aria-label="Rename session"
+      className="gap-0 p-4 sm:p-5"
+    >
       <h2 className="text-sm font-semibold">Rename session</h2>
-      <form className="mt-3 flex max-w-lg flex-col gap-2 sm:flex-row" onSubmit={(e) => void onRename(e)}>
+      <form
+        className="mt-3 flex max-w-lg flex-col gap-2 sm:flex-row"
+        onSubmit={(e) => void onRename(e)}
+      >
         <Input
           aria-label="Session name"
           value={rename}
@@ -78,18 +102,27 @@ function RenameSessionForm({ session }: { session: Session }) {
         </Button>
       </form>
       {renameError ? (
-        <p role="alert" className="mt-2 text-sm text-destructive">{renameError}</p>
+        <p role="alert" className="mt-2 text-sm text-destructive">
+          {renameError}
+        </p>
       ) : null}
-    </section>
+    </Card>
   );
 }
 
 function SessionSettingsForm({ session }: { session: Session }) {
   const queryClient = useQueryClient();
   const [prompt, setPrompt] = React.useState(session.assignment_prompt ?? "");
-  const [reference, setReference] = React.useState(session.excluded_reference_text ?? "");
-  const [excludeCommon, setExcludeCommon] = React.useState(session.exclude_common_text);
-  const [message, setMessage] = React.useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [reference, setReference] = React.useState(
+    session.excluded_reference_text ?? "",
+  );
+  const [excludeCommon, setExcludeCommon] = React.useState(
+    session.exclude_common_text,
+  );
+  const [message, setMessage] = React.useState<{
+    kind: "ok" | "error";
+    text: string;
+  } | null>(null);
   const [saving, setSaving] = React.useState(false);
 
   async function onSave(e: React.FormEvent): Promise<void> {
@@ -103,7 +136,9 @@ function SessionSettingsForm({ session }: { session: Session }) {
         excludeCommonText: excludeCommon,
       });
       await invalidateAnalysisReport(queryClient, session.id);
-      await queryClient.invalidateQueries({ queryKey: ["session", session.id] });
+      await queryClient.invalidateQueries({
+        queryKey: ["session", session.id],
+      });
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });
       setMessage({ kind: "ok", text: "Settings saved." });
     } catch (err) {
@@ -114,75 +149,97 @@ function SessionSettingsForm({ session }: { session: Session }) {
   }
 
   return (
-    <section aria-label="Session settings" className="mt-4 rounded-2xl border border-border/80 bg-card p-4 shadow-sm shadow-slate-900/[0.02] sm:p-5">
+    <Card
+      role="region"
+      aria-label="Session settings"
+      className="mt-4 gap-0 p-4 sm:p-5"
+    >
       <h2 className="text-sm font-semibold">Session settings</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         The assignment question is excluded from overlap scoring. Text shared
         across many submissions is flagged as shared but still counted —
         frequency alone never erases a match.
       </p>
-      <form className="mt-3 max-w-xl space-y-3" onSubmit={(e) => void onSave(e)}>
+      <form
+        className="mt-3 max-w-xl space-y-3"
+        onSubmit={(e) => void onSave(e)}
+      >
         <div className="space-y-1">
-          <label htmlFor={`prompt-${session.id}`} className="text-sm font-medium">
+          <Label htmlFor={`prompt-${session.id}`}>
             Assignment question / instructions
-          </label>
-          <textarea
+          </Label>
+          <Textarea
             id={`prompt-${session.id}`}
             rows={3}
             value={prompt}
             onChange={(e) => setPrompt(e.currentTarget.value)}
             disabled={session.status === "locked"}
             placeholder="Paste the assignment question every student received…"
-            className="flex min-h-[88px] w-full rounded-xl border border-input bg-background px-3 py-2.5 text-sm leading-relaxed shadow-sm shadow-slate-900/[0.02] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="min-h-[88px] leading-relaxed"
           />
         </div>
         <div className="space-y-1">
-          <label htmlFor={`reference-${session.id}`} className="text-sm font-medium">
-            Extra reference text to exclude <span className="text-muted-foreground">(optional)</span>
-          </label>
-          <textarea
+          <Label htmlFor={`reference-${session.id}`}>
+            Extra reference text to exclude{" "}
+            <span className="text-muted-foreground">(optional)</span>
+          </Label>
+          <Textarea
             id={`reference-${session.id}`}
             rows={2}
             value={reference}
             onChange={(e) => setReference(e.currentTarget.value)}
             disabled={session.status === "locked"}
             placeholder="Required declarations, standard headings…"
-            className="flex min-h-[72px] w-full rounded-xl border border-input bg-background px-3 py-2.5 text-sm leading-relaxed shadow-sm shadow-slate-900/[0.02] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="min-h-[72px] leading-relaxed"
           />
         </div>
         <div className="flex items-center gap-2">
-          <input
+          <Checkbox
             id={`exclude-common-${session.id}`}
-            type="checkbox"
             checked={excludeCommon}
-            onChange={(e) => setExcludeCommon(e.currentTarget.checked)}
+            onCheckedChange={(checked) => setExcludeCommon(checked === true)}
             disabled={session.status === "locked"}
-            className="h-4 w-4 rounded border-input"
           />
-          <label htmlFor={`exclude-common-${session.id}`} className="text-sm">
+          <Label htmlFor={`exclude-common-${session.id}`}>
             Flag text shared across many submissions
-          </label>
+          </Label>
         </div>
         {message ? (
           <p
             role={message.kind === "error" ? "alert" : "status"}
             className={
-              message.kind === "error" ? "text-sm text-destructive" : "text-sm text-muted-foreground"
+              message.kind === "error"
+                ? "text-sm text-destructive"
+                : "text-sm text-muted-foreground"
             }
           >
             {message.text}
           </p>
         ) : null}
-        <Button type="submit" variant="outline" disabled={saving || session.status === "locked"}>
+        <Button
+          type="submit"
+          variant="outline"
+          disabled={saving || session.status === "locked"}
+        >
           {saving ? "Saving…" : "Save settings"}
         </Button>
-        {session.status === "locked" ? <p className="text-xs text-muted-foreground">Settings are frozen by the signed session lock.</p> : null}
+        {session.status === "locked" ? (
+          <p className="text-xs text-muted-foreground">
+            Settings are frozen by the signed session lock.
+          </p>
+        ) : null}
       </form>
-    </section>
+    </Card>
   );
 }
 
-function SessionReferenceLibraries({ sessionId, locked }: { sessionId: string; locked: boolean }) {
+function SessionReferenceLibraries({
+  sessionId,
+  locked,
+}: {
+  sessionId: string;
+  locked: boolean;
+}) {
   const queryClient = useQueryClient();
   const [saving, setSaving] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
@@ -206,9 +263,14 @@ function SessionReferenceLibraries({ sessionId, locked }: { sessionId: string; l
       : selected.filter((id) => id !== libraryId);
     try {
       const saved = await setSessionReferenceLibraries(sessionId, next);
-      queryClient.setQueryData(["selected-reference-library-ids", sessionId], saved);
+      queryClient.setQueryData(
+        ["selected-reference-library-ids", sessionId],
+        saved,
+      );
       await invalidateAnalysisReport(queryClient, sessionId);
-      setMessage("Comparison libraries saved. Run analysis again to include them.");
+      setMessage(
+        "Comparison libraries saved. Run analysis again to include them.",
+      );
     } catch (cause) {
       setMessage(asSessionsError(cause).message);
     } finally {
@@ -217,55 +279,79 @@ function SessionReferenceLibraries({ sessionId, locked }: { sessionId: string; l
   }
 
   return (
-    <section id="session-reference-libraries" aria-label="Historical comparison libraries" className="mt-4 rounded-2xl border border-border/80 bg-card p-4 shadow-sm shadow-slate-900/[0.02] sm:p-5">
+    <Card
+      id="session-reference-libraries"
+      role="region"
+      aria-label="Historical comparison libraries"
+      className="mt-4 gap-0 p-4 sm:p-5"
+    >
       <h2 className="text-sm font-semibold">Historical comparison libraries</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         Selected archives are compared independently; historical matches never
         affect current-student scores.
       </p>
       {librariesQuery.isPending || selectedQuery.isPending ? (
-        <div className="mt-3"><LoadingState label="Loading historical libraries…" /></div>
+        <div className="mt-3">
+          <LoadingState label="Loading historical libraries…" />
+        </div>
       ) : librariesQuery.isError || selectedQuery.isError ? (
         <p role="alert" className="mt-2 text-sm text-destructive">
           {asSessionsError(librariesQuery.error ?? selectedQuery.error).message}
         </p>
       ) : librariesQuery.data.length === 0 ? (
         <p className="mt-2 text-sm text-muted-foreground">
-          No archives yet. After a session has a current saved analysis, you can archive it from below.
+          No archives yet. After a session has a current saved analysis, you can
+          archive it from below.
         </p>
       ) : (
         <ul className="mt-3 space-y-2">
           {librariesQuery.data.map((library) => (
             <li key={library.id}>
-              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-background px-3 py-3 text-sm transition-colors hover:bg-muted/40">
-                <input
-                  type="checkbox"
+              <div className="flex items-start gap-3 rounded-md border border-border/70 bg-background px-3 py-3 text-sm transition-colors hover:bg-muted/40">
+                <Checkbox
+                  id={`reference-library-${library.id}`}
                   checked={selected.includes(library.id)}
                   disabled={saving || locked}
-                  onChange={(event) => void onToggle(library.id, event.currentTarget.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-input"
+                  onCheckedChange={(checked) =>
+                    void onToggle(library.id, checked === true)
+                  }
+                  className="mt-0.5"
                 />
-                <span>
+                <Label
+                  htmlFor={`reference-library-${library.id}`}
+                  className="cursor-pointer leading-relaxed"
+                >
                   {library.name}
                   <span className="block text-xs text-muted-foreground">
                     Archived from {library.source_session_name}
                   </span>
-                </span>
-              </label>
+                </Label>
+              </div>
             </li>
           ))}
         </ul>
       )}
-      {message ? <p role="status" className="mt-2 text-xs text-muted-foreground">{message}</p> : null}
-      {locked ? <p className="mt-2 text-xs text-muted-foreground">Selected comparison libraries are frozen by the signed lock.</p> : null}
-    </section>
+      {message ? (
+        <p role="status" className="mt-2 text-xs text-muted-foreground">
+          {message}
+        </p>
+      ) : null}
+      {locked ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Selected comparison libraries are frozen by the signed lock.
+        </p>
+      ) : null}
+    </Card>
   );
 }
 
 function ArchiveSessionForm({ session }: { session: Session }) {
   const queryClient = useQueryClient();
   const [name, setName] = React.useState(session.name);
-  const [message, setMessage] = React.useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [message, setMessage] = React.useState<{
+    kind: "ok" | "error";
+    text: string;
+  } | null>(null);
   const [saving, setSaving] = React.useState(false);
 
   async function onArchive(event: React.FormEvent): Promise<void> {
@@ -274,7 +360,9 @@ function ArchiveSessionForm({ session }: { session: Session }) {
     setMessage(null);
     try {
       const library = await archiveCompletedSession(session.id, name);
-      await queryClient.invalidateQueries({ queryKey: ["reference-libraries"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["reference-libraries"],
+      });
       setMessage({ kind: "ok", text: `Archived as “${library.name}”.` });
     } catch (cause) {
       setMessage({ kind: "error", text: asSessionsError(cause).message });
@@ -284,13 +372,20 @@ function ArchiveSessionForm({ session }: { session: Session }) {
   }
 
   return (
-    <section aria-label="Archive session as reference library" className="mt-4 rounded-2xl border border-border/80 bg-card p-4 shadow-sm shadow-slate-900/[0.02] sm:p-5">
+    <Card
+      role="region"
+      aria-label="Archive session as reference library"
+      className="mt-4 gap-0 p-4 sm:p-5"
+    >
       <h2 className="text-sm font-semibold">Archive this session</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         Creates a read-only text snapshot. A current saved analysis and at least
         two non-empty student submissions are required.
       </p>
-      <form className="mt-3 flex max-w-lg flex-col gap-2 sm:flex-row" onSubmit={(event) => void onArchive(event)}>
+      <form
+        className="mt-3 flex max-w-lg flex-col gap-2 sm:flex-row"
+        onSubmit={(event) => void onArchive(event)}
+      >
         <Input
           aria-label="Reference library name"
           value={name}
@@ -301,11 +396,14 @@ function ArchiveSessionForm({ session }: { session: Session }) {
         </Button>
       </form>
       {message ? (
-        <p role={message.kind === "error" ? "alert" : "status"} className="mt-2 text-sm text-muted-foreground">
+        <p
+          role={message.kind === "error" ? "alert" : "status"}
+          className="mt-2 text-sm text-muted-foreground"
+        >
           {message.text}
         </p>
       ) : null}
-    </section>
+    </Card>
   );
 }
 
@@ -335,7 +433,9 @@ export function SessionDetailPage() {
   });
 
   if (!enabled) {
-    return <ErrorState title="Session not found" message="Missing session id." />;
+    return (
+      <ErrorState title="Session not found" message="Missing session id." />
+    );
   }
   if (sessionQuery.isPending) {
     return <LoadingState label="Loading session…" />;
@@ -365,7 +465,9 @@ export function SessionDetailPage() {
 
   async function refreshSubmissions(): Promise<void> {
     await invalidateAnalysisReport(queryClient, session.id);
-    await queryClient.invalidateQueries({ queryKey: ["submissions", session.id] });
+    await queryClient.invalidateQueries({
+      queryKey: ["submissions", session.id],
+    });
   }
 
   async function onAddStudent(e: React.FormEvent): Promise<void> {
@@ -379,7 +481,9 @@ export function SessionDetailPage() {
       await addStudent(session.id, studentName);
       setStudentName("");
       await invalidateAnalysisReport(queryClient, session.id);
-      await queryClient.invalidateQueries({ queryKey: ["students", session.id] });
+      await queryClient.invalidateQueries({
+        queryKey: ["students", session.id],
+      });
     } catch (err) {
       setStudentError(asSessionsError(err).message);
     }
@@ -390,7 +494,9 @@ export function SessionDetailPage() {
     try {
       await removeStudent(id);
       await invalidateAnalysisReport(queryClient, session.id);
-      await queryClient.invalidateQueries({ queryKey: ["students", session.id] });
+      await queryClient.invalidateQueries({
+        queryKey: ["students", session.id],
+      });
     } catch (err) {
       setStudentError(asSessionsError(err).message);
     }
@@ -413,18 +519,39 @@ export function SessionDetailPage() {
       <RenameSessionForm key={session.id} session={session} />
 
       <SessionSettingsForm key={`settings-${session.id}`} session={session} />
-      <SessionReferenceLibraries sessionId={session.id} locked={session.status === "locked"} />
+      <SessionReferenceLibraries
+        sessionId={session.id}
+        locked={session.status === "locked"}
+      />
       <ArchiveSessionForm session={session} />
 
-      <section aria-label="Students" className="mt-7 rounded-2xl border border-border/80 bg-card p-4 shadow-sm shadow-slate-900/[0.025] sm:p-5">
+      <Card
+        role="region"
+        aria-label="Students"
+        className="mt-7 gap-0 p-4 sm:p-5"
+      >
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Roster</p>
-            <h2 className="mt-1 text-lg font-semibold tracking-tight">Students <span className="text-sm font-medium text-muted-foreground">({students.length})</span></h2>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">
+              Roster
+            </p>
+            <h2 className="mt-1 text-lg font-semibold tracking-tight">
+              Students{" "}
+              <span className="text-sm font-medium text-muted-foreground">
+                ({students.length})
+              </span>
+            </h2>
           </div>
-          {session.status === "locked" ? <span className="rounded-full border px-2.5 py-1 text-xs text-muted-foreground">Roster frozen</span> : null}
+          {session.status === "locked" ? (
+            <span className="rounded-full border px-2.5 py-1 text-xs text-muted-foreground">
+              Roster frozen
+            </span>
+          ) : null}
         </div>
-        <form className="mt-4 flex max-w-lg flex-col gap-2 sm:flex-row" onSubmit={(e) => void onAddStudent(e)}>
+        <form
+          className="mt-4 flex max-w-lg flex-col gap-2 sm:flex-row"
+          onSubmit={(e) => void onAddStudent(e)}
+        >
           <Input
             aria-label="Student name"
             placeholder="Add a student…"
@@ -438,7 +565,9 @@ export function SessionDetailPage() {
           </Button>
         </form>
         {studentError ? (
-          <p role="alert" className="mt-2 text-sm text-destructive">{studentError}</p>
+          <p role="alert" className="mt-2 text-sm text-destructive">
+            {studentError}
+          </p>
         ) : null}
         <div className="mt-4">
           {studentsQuery.isPending ? (
@@ -459,9 +588,14 @@ export function SessionDetailPage() {
               {students.map((student) => {
                 const submission = submissionsByStudent.get(student.id);
                 return (
-                  <li key={student.id} className="flex flex-col gap-3 rounded-xl border border-border/70 bg-background p-3.5 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+                  <li
+                    key={student.id}
+                    className="flex flex-col gap-3 rounded-md border border-border/70 bg-background p-3.5 sm:flex-row sm:items-center sm:justify-between sm:p-4"
+                  >
                     <div className="min-w-0">
-                      <span className="text-sm font-medium">{student.display_name}</span>
+                      <span className="text-sm font-medium">
+                        {student.display_name}
+                      </span>
                       <p className="truncate text-xs text-muted-foreground">
                         {submission
                           ? [
@@ -487,13 +621,19 @@ export function SessionDetailPage() {
                         studentId={student.id}
                         existing={submission ?? null}
                         open={dialogFor === student.id}
-                        onOpenChange={(o) => setDialogFor(o ? student.id : null)}
+                        onOpenChange={(o) =>
+                          setDialogFor(o ? student.id : null)
+                        }
                         onSaved={() => {
                           setDialogFor(null);
                           void refreshSubmissions();
                         }}
                         trigger={
-                          <Button variant="outline" size="sm" disabled={session.status === "locked"}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={session.status === "locked"}
+                          >
                             {submission ? "View / Replace" : "Add submission"}
                           </Button>
                         }
@@ -504,7 +644,12 @@ export function SessionDetailPage() {
                         confirmLabel="Remove"
                         onConfirm={() => void onRemoveStudent(student.id)}
                         trigger={
-                          <Button variant="ghost" size="sm" aria-label={`Remove ${student.display_name}`} disabled={session.status === "locked"}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Remove ${student.display_name}`}
+                            disabled={session.status === "locked"}
+                          >
                             <Trash2 className="h-4 w-4" aria-hidden />
                             Remove
                           </Button>
@@ -517,7 +662,7 @@ export function SessionDetailPage() {
             </ul>
           )}
         </div>
-      </section>
+      </Card>
 
       <AnalysisSection
         sessionId={session.id}
@@ -533,7 +678,11 @@ export function SessionDetailPage() {
         confirmLabel="Delete"
         onConfirm={() => void onDeleteSession()}
         trigger={
-          <Button variant="destructive" aria-label={`Delete ${session.name}`} disabled={session.status === "locked"}>
+          <Button
+            variant="destructive"
+            aria-label={`Delete ${session.name}`}
+            disabled={session.status === "locked"}
+          >
             <Trash2 className="h-4 w-4" aria-hidden />
             Delete session
           </Button>

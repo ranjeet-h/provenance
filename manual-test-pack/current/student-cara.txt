@@ -1,6 +1,3 @@
-Student: Cara Sample
-Assignment: Neighborhood trees and heat
-
 Small solar microgrids can keep essential services running when a storm interrupts the main electric network. A clinic can prioritize refrigeration for medicine, while a community center can provide a place to charge phones and receive local updates. Battery size should be based on the equipment that must stay online and the number of hours a neighborhood may be disconnected.
 
 Before construction, engineers should inspect rooftops, shade, wiring, and access for repair crews. Local residents can help identify which buildings are trusted gathering places and which services are most important during an outage. A maintenance plan should name who checks the batteries, records faults, and arranges replacement parts.

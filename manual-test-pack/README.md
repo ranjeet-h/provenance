@@ -29,7 +29,7 @@ Review the pairwise evidence and the per-student details:
 - Cara's response is an unrelated control. It should not share a substantial passage with Ada or Ben.
 - Confirm that the assignment prompt is treated as prompt/common material rather than student copying, if prompt exclusion is shown in the review.
 
-The fixture is designed to exercise those cases; scores and displayed boundaries are produced by the app and are not a promise of perfect detection.
+The fixture is designed to exercise those cases; scores and displayed boundaries are produced by the app and are not a promise of perfect detection. Pairwise percentages are directional: each row is divided by that student's eligible words, so opposite cells can differ slightly. Overall coverage uses the union of matched ranges; exact and modified percentages are overlapping breakdowns and should not be added.
 
 ## 3. Test each supported file-import format
 
@@ -54,7 +54,7 @@ Return to `Manual overlap test` and:
 
 1. Choose **Lock session for certification** and complete the operating-system Keychain/credential-store prompt if macOS displays one. The lock is intentionally irreversible in the UI, so do this only after reviewing the evidence.
 2. Confirm that the session now says **Session locked · inputs frozen** and no longer offers editing or re-analysis.
-3. Under per-student overlap, choose **Generate certified report for Ada Sample**. Save both the PDF and the companion signed JSON when prompted.
+3. Under per-student overlap, choose **Generate certified report for Ada Sample**. In the native save dialog, choose where to save the PDF; the companion signed JSON is saved beside it with the same base name. If a JSON sidecar already exists there, choose a different name or location so it is not overwritten.
 4. Check that the PDF identifies a teacher-certified report and includes a QR code; the signed JSON is required for full offline verification.
 5. In **Verify a signed report**, choose the original JSON and press **Verify signature**. Expect a successful verification message.
 6. In a terminal, run the helper below with the downloaded JSON path (quote the path if it contains spaces):
@@ -71,7 +71,7 @@ Return to `Manual overlap test` and:
 2. Upload `manual-test-pack/self-check/self-check-student.txt`.
 3. Select the imported reference library (the library created in step 3) in the session's reference-library section. With one current submission, a comparison library must be selected before analysis is available.
 4. Choose **Analyze session**. Confirm that the selected library is listed as the comparison corpus and that the copied passage is shown as historical evidence, separately from current-session pairwise scores.
-5. Choose **Download Self Check PDF** for Riley. Confirm the PDF says **Not Teacher Certified**. Do not lock this session as part of this self-check test.
+5. Choose **Download Self Check PDF** for Riley. In the native save dialog, choose where to save it; confirm the app reports the selected path and the PDF says **Not Teacher Certified**. Cancel once and confirm the app says no file was written. Do not lock this session as part of this self-check test.
 6. As a negative check, create another one-submission session without selecting a library. Analysis should remain unavailable and the app should ask you to choose a comparison source. This is an explicit constraint, not an automatic alternate path.
 
 ## What to report back

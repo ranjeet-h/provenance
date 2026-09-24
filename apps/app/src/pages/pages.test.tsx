@@ -57,7 +57,9 @@ describe("SessionsPage", () => {
     const user = userEvent.setup();
     renderAt("/sessions");
     await screen.findByRole("heading", { name: /^sessions$/i, level: 1 });
-    const links = screen.getAllByRole("link", { name: /new session|create session/i });
+    const links = screen.getAllByRole("link", {
+      name: /new session|create session/i,
+    });
     expect(links.length).toBeGreaterThan(0);
     for (const link of links) {
       expect(link).toHaveAttribute("href", "/sessions/new");
@@ -84,7 +86,9 @@ describe("NewSessionPage", () => {
     renderAt("/sessions/new");
     await screen.findByRole("heading", { name: /new session/i });
     await user.click(screen.getByRole("button", { name: /create session/i }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/enter a session name/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /enter a session name/i,
+    );
   });
 });
 
@@ -105,51 +109,35 @@ describe("ReferenceLibrariesPage", () => {
     expect(
       await screen.findByRole("heading", { name: /^reference libraries$/i }),
     ).toBeInTheDocument();
-    expect(await screen.findByText(/run an analysis with at least two submissions/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/run an analysis with at least two submissions/i),
+    ).toBeInTheDocument();
   });
 });
 
-describe("SettingsPage diagnostics", () => {
+describe("SettingsPage", () => {
   it("makes local storage and supported digital text sources explicit", () => {
     render(<SettingsPage />);
-    expect(screen.getByRole("heading", { name: /stored on this device/i })).toBeInTheDocument();
-    expect(screen.getByRole("list", { name: /supported input types/i })).toHaveTextContent(
-      "Pasted textTXTMarkdownDigital PDFDOCX",
-    );
-    expect(screen.getByText(/scanned pdfs and image files are not supported/i)).toBeInTheDocument();
-  });
-
-  it("greets through the Tauri boundary", async () => {
-    const user = userEvent.setup();
-    setInvokeImpl(async (_cmd, args) => `Hello, ${String(args?.["name"])}!`);
-    render(<SettingsPage />);
-    await user.type(screen.getByLabelText(/your name/i), "Ada");
-    await user.click(screen.getByRole("button", { name: /test connection/i }));
-    expect(await screen.findByText("Hello, Ada!")).toBeInTheDocument();
-  });
-
-  it("defaults to Provenance for a blank name", async () => {
-    const user = userEvent.setup();
-    const seen: Array<Record<string, unknown> | undefined> = [];
-    setInvokeImpl(async (_cmd, args) => {
-      seen.push(args);
-      return "ok";
-    });
-    render(<SettingsPage />);
-    await user.click(screen.getByRole("button", { name: /test connection/i }));
-    expect(seen[0]?.["name"]).toBe("Provenance");
-  });
-
-  it("shows a friendly message when the shell is unreachable", async () => {
-    const user = userEvent.setup();
-    setInvokeImpl(async () => {
-      throw new Error("no shell");
-    });
-    render(<SettingsPage />);
-    await user.click(screen.getByRole("button", { name: /test connection/i }));
     expect(
-      await screen.findByText(/not running in tauri shell/i),
+      screen.getByRole("heading", { name: /stored on this device/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("list", { name: /supported input types/i }),
+    ).toHaveTextContent("Pasted textTXTMarkdownDigital PDFDOCX");
+    expect(
+      screen.getByText(/scanned pdfs and image files are not supported/i),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show developer diagnostics", () => {
+    render(<SettingsPage />);
+    expect(screen.queryByText(/desktop connection/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/advanced text inspection/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /test connection|inspect text/i }),
+    ).not.toBeInTheDocument();
   });
 });
 

@@ -76,6 +76,95 @@ fn setup_session(pool: &sqlx::SqlitePool) -> (String, String, String, String) {
 }
 
 #[test]
+fn manual_overlap_pack_report_can_be_reproduced_from_checked_in_files() {
+    let (_dir, pool) = fresh_db();
+    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("manual-test-pack/current");
+    let session = block_on(service::create_session(
+        &pool,
+        NewSession {
+            name: "Manual overlap test".into(),
+            subject: None,
+        },
+    ))
+    .expect("session");
+    let prompt = std::fs::read_to_string(fixture_dir.join("assignment-prompt.txt"))
+        .expect("assignment prompt");
+    block_on(service::update_session(
+        &pool,
+        &session.id,
+        SessionUpdate {
+            name: None,
+            subject: None,
+            assignment_prompt: Some(Some(prompt)),
+            excluded_reference_text: None,
+            exclude_common_text: Some(true),
+        },
+    ))
+    .expect("save assignment prompt");
+
+    let mut id_by_name = std::collections::HashMap::new();
+    for (name, filename) in [
+        ("Ada Sample", "student-ada.txt"),
+        ("Ben Sample", "student-ben.md"),
+        ("Cara Sample", "student-cara.txt"),
+    ] {
+        let student = block_on(service::add_student(
+            &pool,
+            &session.id,
+            NewStudent {
+                display_name: name.into(),
+            },
+        ))
+        .expect("student");
+        let bytes = std::fs::read(fixture_dir.join(filename)).expect("student fixture");
+        block_on(service::save_file_submission(
+            &pool,
+            &student.id,
+            Some(filename.into()),
+            &bytes,
+        ))
+        .expect("save submission");
+        id_by_name.insert(name, student.id);
+    }
+
+    let report =
+        block_on(analysis::analyze_session_exact(&pool, &session.id)).expect("analyze manual pack");
+    let ada = &id_by_name["Ada Sample"];
+    let ben = &id_by_name["Ben Sample"];
+    let cara = &id_by_name["Cara Sample"];
+    let pair = |x: &str, y: &str| {
+        report
+            .pairs
+            .iter()
+            .find(|pair| {
+                (pair.a_student_id == x && pair.b_student_id == y)
+                    || (pair.a_student_id == y && pair.b_student_id == x)
+            })
+            .expect("pair exists")
+    };
+    let ada_ben = pair(ada, ben);
+    assert!(
+        ada_ben
+            .passages
+            .iter()
+            .any(|passage| passage.kind == provenance_core::analysis::PassageKind::Exact),
+        "the shared paragraph should remain exact evidence"
+    );
+    assert!(
+        ada_ben
+            .passages
+            .iter()
+            .any(|passage| passage.kind == provenance_core::analysis::PassageKind::Modified),
+        "the edited paragraph should remain modified evidence"
+    );
+    assert!(pair(ada, cara).passages.is_empty());
+    assert!(pair(ben, cara).passages.is_empty());
+    assert_eq!(cov_of(&report, cara), 0.0);
+}
+
+#[test]
 fn three_way_session_flags_only_the_copied_pair() {
     let (_dir, pool) = fresh_db();
     let (session, a, b, c) = setup_session(&pool);
