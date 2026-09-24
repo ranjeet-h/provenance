@@ -11,7 +11,8 @@ intent or misconduct.
 > are not available yet.
 
 [Open the product page](https://ranjeet-h.github.io/provenance/) ·
-[Build and usage guide](docs/GETTING_STARTED.md)
+[Build and usage guide](docs/GETTING_STARTED.md) ·
+[Proprietary license](LICENSE)
 
 ## What it does
 
@@ -108,6 +109,7 @@ reviewed local inputs; it is not an institutional certificate.
 ## Status and source terms
 
 This repository is public for inspection, security review, and proof of work.
-It is **not open-source licensed for reuse**. All rights are reserved; see
-[RIGHTS.md](RIGHTS.md). Public visibility does not grant a general license to
-copy, modify, redistribute, or create derivative works.
+It is **not open-source licensed for general reuse**. See the
+[proprietary license](LICENSE) and [rights notice](RIGHTS.md). Public
+repositories can be viewed and forked through GitHub under GitHub's terms;
+those platform permissions are not a general license for reuse outside them.
