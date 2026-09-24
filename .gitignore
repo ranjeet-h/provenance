@@ -1,0 +1,55 @@
+# OS / editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Node / frontend
+node_modules/
+apps/app/dist/
+apps/app/coverage/
+apps/app/.vite/
+apps/app/playwright-report/
+apps/app/test-results/
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Rust / Tauri
+/target/
+**/target/
+apps/app/src-tauri/target/
+apps/app/src-tauri/gen/
+
+# Logs and temp files
+*.log
+*.pid
+tmp/
+temp/
+
+# Local build output
+build/
+out/
+dist/
+coverage/
+.nyc_output/
+
+# Local databases / caches
+*.db
+*.sqlite
+*.sqlite3
+.cache/
+
+# Generated app data
+apps/app/.cache/
+apps/app/.parcel-cache/

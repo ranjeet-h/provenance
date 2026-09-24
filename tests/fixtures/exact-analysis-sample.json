@@ -1,0 +1,306 @@
+{
+  "common_text_applied": true,
+  "common_text_version": 3,
+  "fingerprint_version": 1,
+  "modified_version": 1,
+  "normalization_version": 1,
+  "pairs": [
+    {
+      "a_student_id": "stud-amit",
+      "b_student_id": "stud-chen",
+      "coverage_a": 29.268292682926827,
+      "coverage_b": 54.54545454545454,
+      "excluded": [
+        {
+          "char_end": 65,
+          "char_start": 0,
+          "reason": "Prompt",
+          "side": "a",
+          "token_end": 12,
+          "token_start": 0,
+          "tokens": 12
+        },
+        {
+          "char_end": 65,
+          "char_start": 0,
+          "reason": "Prompt",
+          "side": "b",
+          "token_end": 12,
+          "token_start": 0,
+          "tokens": 12
+        }
+      ],
+      "passages": [
+        {
+          "a_char_end": 129,
+          "a_char_start": 67,
+          "a_token_end": 24,
+          "a_token_start": 12,
+          "b_char_end": 129,
+          "b_char_start": 67,
+          "b_token_end": 24,
+          "b_token_start": 12,
+          "common_text": true,
+          "identity": null,
+          "kind": "exact",
+          "tokens": 12
+        }
+      ]
+    },
+    {
+      "a_student_id": "stud-amit",
+      "b_student_id": "stud-priya",
+      "coverage_a": 53.65853658536586,
+      "coverage_b": 84.61538461538461,
+      "excluded": [
+        {
+          "char_end": 65,
+          "char_start": 0,
+          "reason": "Prompt",
+          "side": "a",
+          "token_end": 12,
+          "token_start": 0,
+          "tokens": 12
+        },
+        {
+          "char_end": 65,
+          "char_start": 0,
+          "reason": "Prompt",
+          "side": "b",
+          "token_end": 12,
+          "token_start": 0,
+          "tokens": 12
+        }
+      ],
+      "passages": [
+        {
+          "a_char_end": 206,
+          "a_char_start": 67,
+          "a_token_end": 34,
+          "a_token_start": 12,
+          "b_char_end": 206,
+          "b_char_start": 67,
+          "b_token_end": 34,
+          "b_token_start": 12,
+          "common_text": true,
+          "identity": null,
+          "kind": "exact",
+          "tokens": 22
+        }
+      ]
+    },
+    {
+      "a_student_id": "stud-amit",
+      "b_student_id": "stud-sara",
+      "coverage_a": 78.04878048780488,
+      "coverage_b": 100.0,
+      "excluded": [
+        {
+          "char_end": 65,
+          "char_start": 0,
+          "reason": "Prompt",
+          "side": "a",
+          "token_end": 12,
+          "token_start": 0,
+          "tokens": 12
+        },
+        {
+          "char_end": 65,
+          "char_start": 0,
+          "reason": "Prompt",
+          "side": "b",
+          "token_end": 12,
+          "token_start": 0,
+          "tokens": 12
+        }
+      ],
+      "passages": [
+        {
+          "a_char_end": 129,
+          "a_char_start": 67,
+          "a_token_end": 24,
+          "a_token_start": 12,
+          "b_char_end": 129,
+          "b_char_start": 67,
+          "b_token_end": 24,
+          "b_token_start": 12,
+          "common_text": true,
+          "identity": null,
+          "kind": "exact",
+          "tokens": 12
+        },
+        {
+          "a_char_end": 326,
+          "a_char_start": 196,
+          "a_token_end": 53,
+          "a_token_start": 33,
+          "b_char_end": 251,
+          "b_char_start": 131,
+          "b_token_end": 42,
+          "b_token_start": 24,
+          "common_text": false,
+          "identity": 0.6545454545454545,
+          "kind": "modified",
+          "tokens": 20
+        }
+      ]
+    },
+    {
+      "a_student_id": "stud-chen",
+      "b_student_id": "stud-priya",
+      "coverage_a": 54.54545454545454,
+      "coverage_b": 46.15384615384615,
+      "excluded": [
+        {
+          "char_end": 65,
+          "char_start": 0,
+          "reason": "Prompt",
+          "side": "b",
+          "token_end": 12,
+          "token_start": 0,
+          "tokens": 12
+        },
+        {
+          "char_end": 65,
+          "char_start": 0,
+          "reason": "Prompt",
+          "side": "a",
+          "token_end": 12,
+          "token_start": 0,
+          "tokens": 12
+        }
+      ],
+      "passages": [
+        {
+          "a_char_end": 129,
+          "a_char_start": 67,
+          "a_token_end": 24,
+          "a_token_start": 12,
+          "b_char_end": 129,
+          "b_char_start": 67,
+          "b_token_end": 24,
+          "b_token_start": 12,
+          "common_text": true,
+          "identity": null,
+          "kind": "exact",
+          "tokens": 12
+        }
+      ]
+    },
+    {
+      "a_student_id": "stud-chen",
+      "b_student_id": "stud-sara",
+      "coverage_a": 54.54545454545454,
+      "coverage_b": 40.0,
+      "excluded": [
+        {
+          "char_end": 65,
+          "char_start": 0,
+          "reason": "Prompt",
+          "side": "a",
+          "token_end": 12,
+          "token_start": 0,
+          "tokens": 12
+        },
+        {
+          "char_end": 65,
+          "char_start": 0,
+          "reason": "Prompt",
+          "side": "b",
+          "token_end": 12,
+          "token_start": 0,
+          "tokens": 12
+        }
+      ],
+      "passages": [
+        {
+          "a_char_end": 129,
+          "a_char_start": 67,
+          "a_token_end": 24,
+          "a_token_start": 12,
+          "b_char_end": 129,
+          "b_char_start": 67,
+          "b_token_end": 24,
+          "b_token_start": 12,
+          "common_text": true,
+          "identity": null,
+          "kind": "exact",
+          "tokens": 12
+        }
+      ]
+    },
+    {
+      "a_student_id": "stud-priya",
+      "b_student_id": "stud-sara",
+      "coverage_a": 46.15384615384615,
+      "coverage_b": 40.0,
+      "excluded": [
+        {
+          "char_end": 65,
+          "char_start": 0,
+          "reason": "Prompt",
+          "side": "a",
+          "token_end": 12,
+          "token_start": 0,
+          "tokens": 12
+        },
+        {
+          "char_end": 65,
+          "char_start": 0,
+          "reason": "Prompt",
+          "side": "b",
+          "token_end": 12,
+          "token_start": 0,
+          "tokens": 12
+        }
+      ],
+      "passages": [
+        {
+          "a_char_end": 129,
+          "a_char_start": 67,
+          "a_token_end": 24,
+          "a_token_start": 12,
+          "b_char_end": 129,
+          "b_char_start": 67,
+          "b_token_end": 24,
+          "b_token_start": 12,
+          "common_text": true,
+          "identity": null,
+          "kind": "exact",
+          "tokens": 12
+        }
+      ]
+    }
+  ],
+  "per_student": [
+    {
+      "coverage": 100.0,
+      "eligible_tokens": 41,
+      "matched_tokens": 41,
+      "student_id": "stud-amit",
+      "total_tokens": 53
+    },
+    {
+      "coverage": 54.54545454545454,
+      "eligible_tokens": 22,
+      "matched_tokens": 12,
+      "student_id": "stud-chen",
+      "total_tokens": 34
+    },
+    {
+      "coverage": 84.61538461538461,
+      "eligible_tokens": 26,
+      "matched_tokens": 22,
+      "student_id": "stud-priya",
+      "total_tokens": 38
+    },
+    {
+      "coverage": 100.0,
+      "eligible_tokens": 30,
+      "matched_tokens": 30,
+      "student_id": "stud-sara",
+      "total_tokens": 42
+    }
+  ],
+  "prompt_applied": true
+}

@@ -1,0 +1,18 @@
+{
+  "name": "provenance",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@12.3.3+sha512.4d0847314b85338f031f6613850e3e6140fc8e41154b7e33ae10bab44bbdc11b274883a965d9890a04e49ad387124555ebda049ec278fd9ef902daeadb5a83e2",
+  "scripts": {
+    "lint": "pnpm --filter ./apps/app lint",
+    "typecheck": "pnpm --filter ./apps/app typecheck",
+    "test": "pnpm --filter ./apps/app test --run",
+    "build": "pnpm --filter ./apps/app build",
+    "coverage": "pnpm --filter ./apps/app coverage",
+    "coverage:rust": "bash scripts/coverage.sh",
+    "check": "pnpm typecheck && pnpm lint && pnpm test"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2"
+  }
+}
