@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f5f7f6" />
+    <meta
+      name="description"
+      content="Provenance is a local-first desktop workspace for reviewing overlap in digital student submissions. Inspect passages and sources; keep decisions human."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Provenance — review the evidence" />
+    <meta
+      property="og:description"
+      content="Compare digital submissions on your device. Trace matching passages to their sources. Keep the decision human."
+    />
+    <meta property="og:url" content="https://ranjeet-h.github.io/provenance/" />
+    <title>Provenance — review the evidence, locally</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='9' fill='%231e5791'/%3E%3Cpath d='M12 9h11l6 6v16H12z' fill='none' stroke='white' stroke-width='2'/%3E%3Cpath d='M23 9v7h6M16 21h9M16 26h7' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Provenance home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none">
+            <path d="M8 4.5h10l6 6V27H8z" />
+            <path d="M18 4.5v7h6M12 17h8M12 21h8M12 25h5" />
+          </svg>
+        </span>
+        <span>Provenance</span>
+      </a>
+      <nav class="main-nav" aria-label="Main navigation">
+        <a href="#workflow">Workflow</a>
+        <a href="#boundaries">Scope</a>
+        <a href="#build">Build locally</a>
+      </nav>
+      <a class="nav-link" href="https://github.com/ranjeet-h/provenance">
+        Inspect the source
+        <span aria-hidden="true">↗</span>
+      </a>
+    </header>
+
+    <main id="main">
+      <section class="hero page-wrap" id="top">
+        <div class="hero-copy">
+          <p class="eyebrow">
+            <span class="eyebrow-dot"></span> LOCAL-FIRST · DIGITAL TEXT
+          </p>
+          <h1>Review the evidence.<br /><em>Keep the decision human.</em></h1>
+          <p class="hero-lede">
+            Provenance gives educators a desktop workspace to compare student
+            submissions, inspect shared passages, and trace each match to its
+            source—on the same device.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#build">Build it locally</a>
+            <a class="button button-secondary" href="#workflow"
+              >See how it works</a
+            >
+          </div>
+          <p class="hero-note">
+            Compare the work you choose. See matches in context. Leave the
+            conclusion to the reviewer.
+          </p>
+        </div>
+
+        <figure class="product-figure">
+          <div
+            class="product-window"
+            role="img"
+            aria-label="Illustrative Provenance interface showing two submission excerpts with a shared passage highlighted"
+          >
+            <div class="window-top">
+              <div class="window-dots" aria-hidden="true">
+                <i></i><i></i><i></i>
+              </div>
+              <span>Assignment review</span>
+              <span class="local-label"><span></span> On this device</span>
+            </div>
+            <div class="window-body">
+              <aside class="window-rail" aria-hidden="true">
+                <span class="rail-logo"></span>
+                <span class="rail-item active"></span>
+                <span class="rail-item"></span>
+                <span class="rail-item"></span>
+              </aside>
+              <div class="review-screen">
+                <div class="review-heading">
+                  <div>
+                    <span class="mock-kicker">EVIDENCE REVIEW</span>
+                    <h2>Urban heat response</h2>
+                  </div>
+                  <span class="draft-chip">Review</span>
+                </div>
+                <div class="match-summary">
+                  <span class="summary-mark" aria-hidden="true">↔</span>
+                  <div>
+                    <strong>Shared passage found</strong>
+                    <span>Compare both sources in context</span>
+                  </div>
+                  <span class="summary-chevron" aria-hidden="true">›</span>
+                </div>
+                <div class="source-grid">
+                  <article class="source-panel">
+                    <div class="source-title">
+                      <span>SUBMISSION A</span><b>Student A</b>
+                    </div>
+                    <p>
+                      Neighborhood trees can
+                      <mark
+                        >reduce surface temperatures by providing shade</mark
+                      >
+                      and lowering heat exposure along sidewalks.
+                    </p>
+                    <span class="source-foot">Original text · paragraph 2</span>
+                  </article>
+                  <article class="source-panel">
+                    <div class="source-title">
+                      <span>SUBMISSION B</span><b>Student B</b>
+                    </div>
+                    <p>
+                      Adding tree cover may
+                      <mark
+                        >reduce surface temperatures by providing shade</mark
+                      >
+                      near streets and public spaces.
+                    </p>
+                    <span class="source-foot">Original text · paragraph 3</span>
+                  </article>
+                </div>
+                <div class="review-note">
+                  <span aria-hidden="true">i</span>
+                  A match is evidence to review, not a finding of misconduct.
+                </div>
+              </div>
+            </div>
+          </div>
+          <figcaption>
+            Illustrative interface · sample text only, not a measured result
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="status-band" aria-label="Project status">
+        <div class="page-wrap status-inner">
+          <span class="status-indicator"></span>
+          <p>
+            <strong>Made for careful review</strong> · A focused workspace for
+            digital assignments
+          </p>
+          <a href="#build"
+            >Build the desktop app <span aria-hidden="true">↗</span></a
+          >
+        </div>
+      </section>
+
+      <section class="workflow section-space page-wrap" id="workflow">
+        <div class="section-intro">
+          <p class="eyebrow">A REVIEW WORKSPACE, NOT A VERDICT MACHINE</p>
+          <h2>From submissions<br />to source-level evidence.</h2>
+          <p>
+            Keep an assignment's material together, see what overlaps, and
+            decide what deserves a closer look.
+          </p>
+        </div>
+        <ol class="workflow-list">
+          <li>
+            <span class="step-number">01</span>
+            <div>
+              <h3>Bring in digital work</h3>
+              <p>
+                Paste text or import TXT, Markdown, selectable-text PDF, and
+                DOCX submissions into a local session.
+              </p>
+            </div>
+            <span class="step-symbol" aria-hidden="true">＋</span>
+          </li>
+          <li>
+            <span class="step-number">02</span>
+            <div>
+              <h3>Inspect each match</h3>
+              <p>
+                Review exact and modified overlap with the matched passages
+                connected to their source submissions.
+              </p>
+            </div>
+            <span class="step-symbol" aria-hidden="true">⌕</span>
+          </li>
+          <li>
+            <span class="step-number">03</span>
+            <div>
+              <h3>Keep a review record</h3>
+              <p>
+                Export reports or move anonymized reference archives between
+                local workspaces with a .plagpack file.
+              </p>
+            </div>
+            <span class="step-symbol" aria-hidden="true">↗</span>
+          </li>
+        </ol>
+      </section>
+
+      <section class="principles-section" id="principles">
+        <div class="page-wrap principles-layout">
+          <div>
+            <p class="eyebrow">DESIGNED AROUND CONTEXT</p>
+            <h2>Overlap is a place to start reading.</h2>
+          </div>
+          <div class="principles-copy">
+            <p>
+              A shared phrase can have many explanations: a common prompt,
+              familiar terminology, a quotation, or collaboration. Provenance
+              puts the matched text beside its source so an educator can review
+              what the surrounding work says.
+            </p>
+            <p>
+              Compare the submissions and reference materials you select. A
+              match helps direct attention; the educator brings the context and
+              makes the decision.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="scope section-space page-wrap" id="boundaries">
+        <div class="scope-heading">
+          <div>
+            <p class="eyebrow">BRING THE FORMATS YOU ALREADY USE</p>
+            <h2>Digital text in.<br /><em>Evidence in context.</em></h2>
+          </div>
+          <p>
+            Review pasted writing and the digital document formats used in
+            everyday assignments.
+          </p>
+        </div>
+        <div
+          class="scope-table"
+          role="table"
+          aria-label="Supported input types"
+        >
+          <div class="scope-row scope-header" role="row">
+            <span role="columnheader">Input</span>
+            <span role="columnheader">Status</span>
+            <span role="columnheader">Details</span>
+          </div>
+          <div class="scope-row" role="row">
+            <span role="cell">Pasted text, TXT, Markdown</span>
+            <span class="scope-yes" role="cell">Supported</span>
+            <span role="cell">Paste or open your text</span>
+          </div>
+          <div class="scope-row" role="row">
+            <span role="cell">Digital PDF, DOCX</span>
+            <span class="scope-yes" role="cell">Supported</span>
+            <span role="cell">PDFs need selectable text</span>
+          </div>
+        </div>
+        <p class="scope-note">
+          Works with text you can select and copy from the original document.
+        </p>
+      </section>
+
+      <section class="local-section">
+        <div class="page-wrap local-layout">
+          <div class="local-emblem" aria-hidden="true">
+            <svg viewBox="0 0 120 120" fill="none">
+              <path
+                d="M60 10 99 26v28c0 25-16 43-39 56C37 97 21 79 21 54V26L60 10Z"
+              />
+              <path d="m43 59 12 12 24-26" />
+            </svg>
+          </div>
+          <div class="local-copy">
+            <p class="eyebrow">LOCAL BY DESIGN</p>
+            <h2>A private workspace for student writing.</h2>
+            <p>
+              Review assignments without sending student writing to an online
+              analysis service. Keep your sessions on your device, and share
+              only the reports or reference packs you choose to export.
+            </p>
+            <p class="privacy-caveat">
+              Local storage is not a substitute for device security. Protect
+              student data, backups, and any reports you export.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="build-section section-space page-wrap" id="build">
+        <div class="build-copy">
+          <p class="eyebrow">RUN IT ON YOUR MACHINE</p>
+          <h2>Build the desktop app from source.</h2>
+          <p>
+            Install Node.js, pnpm 12.3.3, Rust, and the Tauri system
+            dependencies for your OS. Then start the app from the repository
+            root.
+          </p>
+          <a
+            class="button button-primary"
+            href="https://github.com/ranjeet-h/provenance/blob/master/docs/GETTING_STARTED.md"
+            >Read the full setup guide</a
+          >
+          <p class="build-note">
+            The current desktop preview is available as source; public
+            installers are not available yet.
+          </p>
+        </div>
+        <div class="command-panel">
+          <div class="command-title">
+            <span>TERMINAL</span><span>FROM REPOSITORY ROOT</span>
+          </div>
+          <pre><code>pnpm install --frozen-lockfile
+pnpm --filter provenance-app tauri dev</code></pre>
+          <div class="command-foot">
+            <span>First native build compiles the Rust engine.</span>
+            <a href="https://tauri.app/start/prerequisites/"
+              >Tauri prerequisites <span aria-hidden="true">↗</span></a
+            >
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="page-wrap footer-inner">
+        <a class="brand footer-brand" href="#top"
+          ><span class="brand-mark" aria-hidden="true"
+            ><svg viewBox="0 0 32 32" fill="none">
+              <path d="M8 4.5h10l6 6V27H8z" />
+              <path d="M18 4.5v7h6M12 17h8M12 21h8M12 25h5" /></svg></span
+          ><span>Provenance</span></a
+        >
+        <p>Textual overlap is evidence to review—not a conclusion.</p>
+        <div class="footer-links">
+          <a href="https://github.com/ranjeet-h/provenance">Source</a>
+          <a
+            href="https://github.com/ranjeet-h/provenance/blob/master/RIGHTS.md"
+            >Rights</a
+          >
+          <a
+            href="https://github.com/ranjeet-h/provenance/blob/master/docs/GETTING_STARTED.md"
+            >Build guide</a
+          >
+        </div>
+      </div>
+      <div class="page-wrap footer-bottom">
+        <span>Copyright © 2026 ranjeet-h. All rights reserved.</span>
+        <span>Public for inspection · no general reuse license</span>
+      </div>
+    </footer>
+  </body>
+</html>
