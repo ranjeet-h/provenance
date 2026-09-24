@@ -323,6 +323,36 @@ fn add_student(pool: &SqlitePool, session_id: &str, name: &str) -> String {
 }
 
 #[test]
+fn v6_database_repairs_missing_analysis_tables() {
+    let (_dir, pool) = fresh_db();
+    block_on(sqlx::query("DELETE FROM schema_version WHERE version = 7").execute(&pool))
+        .expect("simulate the affected v6 database");
+    block_on(sqlx::query("DROP TABLE raw_pair_analyses").execute(&pool))
+        .expect("simulate missing raw-pair cache table");
+    block_on(sqlx::query("DROP TABLE analysis_results").execute(&pool))
+        .expect("simulate missing saved-analysis table");
+
+    block_on(storage::migrate(&pool)).expect("repair v6 analysis schema");
+
+    let repaired_table_count: i64 = block_on(
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN
+         ('analysis_results', 'raw_pair_analyses')",
+        )
+        .fetch_one(&pool),
+    )
+    .expect("repaired analysis tables are readable");
+    assert_eq!(repaired_table_count, 2);
+
+    let result = block_on(storage::AnalysisRepo::result_for_input(
+        &pool,
+        "session-that-does-not-exist",
+        "input-hash",
+    ));
+    assert_eq!(result.expect("analysis query must work after repair"), None);
+}
+
+#[test]
 fn v2_database_migrates_to_v3_with_sane_defaults() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("v2.db");

@@ -13,7 +13,7 @@ use crate::domain::{
 use crate::error::CoreError;
 
 /// Current schema version. Bump with a new `MIGRATION_Vn` block.
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 const MIGRATION_V1: &str = "
 CREATE TABLE IF NOT EXISTS sessions (
@@ -124,6 +124,29 @@ CREATE TABLE session_locks (
 );
 ";
 
+/// Repair Phase 16 analysis tables when the recorded schema version is ahead
+/// of the physical schema. This is additive and preserves any existing rows.
+const MIGRATION_V7: &str = "
+CREATE TABLE IF NOT EXISTS analysis_results (
+  session_id TEXT PRIMARY KEY REFERENCES sessions (id) ON DELETE CASCADE,
+  input_sha256 TEXT NOT NULL,
+  report_json TEXT NOT NULL,
+  completed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS raw_pair_analyses (
+  cache_key TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+  student_a_id TEXT NOT NULL,
+  student_b_id TEXT NOT NULL,
+  source_hash_a TEXT NOT NULL,
+  source_hash_b TEXT NOT NULL,
+  engine_key TEXT NOT NULL,
+  evidence_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_raw_pair_analyses_session ON raw_pair_analyses (session_id);
+";
+
 async fn apply_migration(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     migration: &str,
@@ -191,6 +214,9 @@ pub async fn migrate(pool: &SqlitePool) -> Result<(), CoreError> {
     }
     if current < 6 {
         apply_migration(&mut tx, MIGRATION_V6, 6).await?;
+    }
+    if current < 7 {
+        apply_migration(&mut tx, MIGRATION_V7, 7).await?;
     }
     tx.commit().await.map_err(CoreError::Database)?;
     Ok(())
