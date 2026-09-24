@@ -1,115 +1,140 @@
+<div align="center">
+
 # Provenance
 
-**Local-first evidence review for digital academic submissions.**
+### See the overlap. Review the context. Keep the decision human.
 
-Provenance helps educators compare student-submitted text, inspect matching
-passages in context, and keep a review record on the same device. It reports
-textual overlap as evidence for a person to review—not as a verdict about
-intent or misconduct.
+**A local-first desktop workspace for educators reviewing textual overlap in student submissions.**
 
-> **Desktop preview.** Build the app from source to try it; public installers
-> are not available yet.
-
-[Open the product page](https://ranjeet-h.github.io/provenance/) ·
-[Build and usage guide](docs/GETTING_STARTED.md) ·
+[Product page](https://ranjeet-h.github.io/provenance/) ·
+[Getting started](docs/GETTING_STARTED.md) ·
+[Security](SECURITY.md) ·
 [Proprietary license](LICENSE)
 
-## What it does
+[![Pages deployment](https://github.com/ranjeet-h/provenance/actions/workflows/pages.yml/badge.svg)](https://github.com/ranjeet-h/provenance/actions/workflows/pages.yml)
 
-- Organizes an assignment into a local session with student submissions.
-- Finds exact and modified textual overlap and links passages to their source
-  submissions for review.
-- Excludes the supplied assignment question and configured reference text from
-  overlap scoring.
-- Compares against selected, read-only reference libraries.
-- Exports and imports portable `.plagpack` reference archives.
-- Creates self-check and signed report PDFs with clear status labels.
-- Runs the comparison engine in the Tauri desktop app; no hosted AI or account
-  is required.
+</div>
 
-The comparison corpus is only the material supplied to the app. Provenance is
-not a web-wide search service, does not establish who copied from whom, and
-does not make a misconduct decision.
+<p align="center">
+  <img src="docs/assets/provenance-overview.svg" alt="Illustrative Provenance review screen showing matching passages highlighted in two student submissions" width="100%" />
+</p>
+<p align="center"><sub>Illustrative preview · synthetic sample text</sub></p>
 
-## Supported input
+Provenance compares the submissions and reference material you select, then
+connects reported matches to their source passages. It gives educators a
+clearer place to review evidence while leaving interpretation and decisions
+with people.
 
-| Input                                     | Support         |
-| ----------------------------------------- | --------------- |
-| Pasted text                               | Supported       |
-| TXT and Markdown                          | Supported       |
-| Digital PDF with selectable/embedded text | Supported       |
-| DOCX                                      | Supported       |
-| Images and image-only or scanned PDFs     | **Unsupported** |
+> **Desktop preview:** build from source to try it. Public signed installers
+> are not available yet.
 
-For PDFs, use a document with selectable text.
+## What you can do
 
-## Run it locally
+- **Follow each match to its source.** Inspect exact and modified overlap in
+  context, linked to the original submission passages.
+- **Focus each comparison.** Exclude the assignment instructions and compare
+  against the work and reference libraries you select.
+- **Keep the assignment together.** Review pairwise and per-student evidence in
+  one session workspace.
+- **Carry review material forward.** Create self-check PDFs or signed reports
+  for locked sessions, and export one or multiple sessions as `.plagpack`
+  reference archives.
 
-Install the native Tauri prerequisites for your operating system, Node.js, the
-repository-pinned pnpm version, and stable Rust. Then, from the repository root:
+## A review in three steps
+
+1. **Gather the work.** Create an assignment session, add the prompt, and paste
+   or import student submissions.
+2. **Read the matches.** Analyze the session, compare the overlap summary, and
+   open matched passages beside their source text.
+3. **Keep the record you need.** Export a self-check or certified report, or
+   move selected session material as a `.plagpack` archive.
+
+The comparison corpus is limited to what you add. Provenance does not search
+the public web or determine intent or misconduct. A match is a prompt to review
+the surrounding context—not a conclusion on its own.
+
+## Supported files
+
+| Input                              | Support                          |
+| ---------------------------------- | -------------------------------- |
+| Pasted text                        | Yes                              |
+| UTF-8 TXT and Markdown             | Yes                              |
+| Digital PDF                        | Yes, when the text is selectable |
+| DOCX                               | Yes                              |
+| Images and image-only/scanned PDFs | Not supported                    |
+
+## Get started
+
+Install Node.js, **pnpm 12.3.3**, stable Rust, and the [native Tauri
+prerequisites](https://tauri.app/start/prerequisites/) for your operating
+system. Then run:
 
 ```sh
+git clone https://github.com/ranjeet-h/provenance.git
+cd provenance
 pnpm install --frozen-lockfile
 pnpm --filter provenance-app tauri dev
 ```
 
-The detailed [getting-started guide](docs/GETTING_STARTED.md) covers platform
-dependencies, building an app bundle, the workflow inside the app, and the
-manual test fixtures. See the official
-[Tauri prerequisites](https://tauri.app/start/prerequisites/) before installing
-native system packages.
+See the [full setup and use guide](docs/GETTING_STARTED.md) for platform
+dependencies, app bundles, session workflows, reports, and archive exchange.
 
-## Developer checks
+## Privacy and review
+
+Student submissions and comparison libraries stay in the local application
+workspace. The app has no hosted analysis service or account sign-in. Exported
+reports and `.plagpack` archives may contain sensitive assignment text—share
+them only with intended recipients and protect your device and backups.
+
+Self-check PDFs are marked **Not Teacher Certified**. A signed report records
+the integrity of reviewed local inputs; it is not an institutional certificate.
+Locking a session for certification is irreversible in the app.
+
+## Run the checks
 
 ```sh
 pnpm typecheck
 pnpm lint
 pnpm test
 pnpm build
+cargo fmt --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-For the full repository gate—including Rust formatting and Clippy—run:
+Or run the complete sequence with `bash scripts/check-all.sh`. Rust build
+artifacts are written to ignored `target/` directories and can use several GB
+of disk space; avoid repeated clean builds.
 
-```sh
-bash scripts/check-all.sh
-```
+The [`manual-test-pack`](manual-test-pack/README.md) contains synthetic
+submissions for checking supported formats, analysis, reports, and
+`.plagpack` round-trips.
 
-The full Rust gate writes build artifacts under `target/`; Tauri packaging also
-uses `apps/app/src-tauri/target/`. Both are ignored by Git. Avoid repeated
-clean/full builds unless you need them.
+<details>
+<summary>Architecture</summary>
 
-## Project layout
+- `apps/app`: React, TypeScript, Vite, and the Tauri desktop shell.
+- `crates/provenance-core`: digital-document import, local storage, and analysis
+  orchestration.
+- `crates/provenance-match`: deterministic exact and modified text matching.
+- `crates/provenance-report`: PDF reports, signing, and `.plagpack` exchange.
+- `packages/shared-types`: shared frontend/native command types.
+- `site`: static product page deployed with GitHub Pages.
 
-```text
-apps/app/                  React + TypeScript desktop interface (Vite/Tauri 2)
-apps/app/src-tauri/        Native Tauri commands and local database setup
-crates/provenance-core/    Import, storage, session, and analysis orchestration
-crates/provenance-match/   Deterministic exact and modified matching
-crates/provenance-report/  Reports, signatures, and .plagpack format
-packages/shared-types/     Frontend/backend command types
-manual-test-pack/          Synthetic manual acceptance fixtures
-docs/                      Local build and use guide
-site/                      Static product page published with GitHub Pages
-```
+</details>
 
-## Data and safety
+## Project links
 
-Assignment sessions, submissions, and reference libraries are stored in the
-local application workspace. The current app has no hosted analysis service,
-account system, or telemetry pipeline. Treat student submissions as sensitive
-even when they remain on your device: restrict device access and protect your
-backups and exported reports.
+- [Product page](https://ranjeet-h.github.io/provenance/)
+- [Build and use guide](docs/GETTING_STARTED.md)
+- [Manual test pack](manual-test-pack/README.md)
+- [Security reporting](SECURITY.md)
+- [Proprietary license and rights](LICENSE)
 
-Overlap is a review signal. Read the matched passages and their surrounding
-context; do not use a percentage alone as a conclusion. Self-check PDFs are
-marked **Not Teacher Certified**. A signed report records integrity of the
-reviewed local inputs; it is not an institutional certificate.
+## License
 
-## Status and source terms
-
-This repository is public for inspection, security review, and proof of work.
-It is **not open-source licensed for general reuse**. See the
-[proprietary license](LICENSE) and [rights notice](RIGHTS.md). Public
-repositories can be viewed and forked through GitHub under GitHub's terms;
-those platform permissions are not a general license for reuse outside them.
+Provenance is **proprietary software; all rights are reserved**. Public access
+is provided for inspection and security review, not as a general reuse or
+commercial license. GitHub's terms provide limited rights to view and fork
+public repositories through GitHub; third-party components remain under their
+own licenses. See [LICENSE](LICENSE) and [RIGHTS.md](RIGHTS.md).

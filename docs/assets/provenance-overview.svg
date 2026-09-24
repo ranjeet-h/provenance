@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" role="img" aria-labelledby="title description">
+  <title id="title">Provenance — review the evidence</title>
+  <desc id="description">An illustrative review workspace with two synthetic submission passages and their shared text highlighted.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#142d3b" />
+      <stop offset="1" stop-color="#1b4658" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a8d7c2" />
+      <stop offset="1" stop-color="#d0e7c5" />
+    </linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#fff" stroke-opacity=".035" />
+    </pattern>
+  </defs>
+  <rect width="1200" height="560" rx="20" fill="url(#background)" />
+  <rect width="1200" height="560" rx="20" fill="url(#grid)" />
+  <circle cx="93" cy="91" r="7" fill="url(#accent)" />
+  <text x="114" y="97" fill="#c0d5d7" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="14" font-weight="700" letter-spacing="2.6">LOCAL-FIRST EVIDENCE REVIEW</text>
+  <text x="76" y="183" fill="#f6f8f5" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="47" font-weight="720" letter-spacing="-1.5">See the overlap.</text>
+  <text x="76" y="242" fill="#b7dec9" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="47" font-weight="720" letter-spacing="-1.5">Read the context.</text>
+  <text x="78" y="294" fill="#cfdddf" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="18">Source-linked passages help educators review</text>
+  <text x="78" y="322" fill="#cfdddf" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="18">textual overlap. People make the decision.</text>
+  <rect x="78" y="370" width="145" height="34" rx="17" fill="#fff" fill-opacity=".09" />
+  <text x="98" y="392" fill="#e1ece8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="650" letter-spacing="1">PRIVATE WORKSPACE</text>
+  <rect x="235" y="370" width="159" height="34" rx="17" fill="#fff" fill-opacity=".09" />
+  <text x="255" y="392" fill="#e1ece8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="650" letter-spacing="1">PASSAGE-LEVEL REVIEW</text>
+  <text x="78" y="488" fill="#99b5bc" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13" letter-spacing="1.5">PASTE · TXT · MARKDOWN · DIGITAL PDF · DOCX</text>
+
+  <rect x="510" y="50" width="625" height="450" rx="13" fill="#0b202a" fill-opacity=".28" />
+  <rect x="524" y="38" width="625" height="450" rx="13" fill="#f7f9f8" />
+  <path d="M537 38h599a13 13 0 0 1 13 13v43H524V51a13 13 0 0 1 13-13Z" fill="#edf2f1" />
+  <circle cx="548" cy="67" r="4" fill="#afc0bd" />
+  <circle cx="564" cy="67" r="4" fill="#afc0bd" />
+  <circle cx="580" cy="67" r="4" fill="#afc0bd" />
+  <text x="624" y="72" fill="#52636a" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="600">ASSIGNMENT REVIEW</text>
+  <rect x="1021" y="54" width="103" height="26" rx="13" fill="#e0efe8" />
+  <circle cx="1037" cy="67" r="4" fill="#4e9273" />
+  <text x="1048" y="71" fill="#356b54" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="650">ON THIS DEVICE</text>
+
+  <rect x="524" y="94" width="92" height="394" fill="#f0f4f3" />
+  <rect x="540" y="117" width="61" height="34" rx="7" fill="#dce8ef" />
+  <rect x="552" y="128" width="8" height="11" rx="1" fill="none" stroke="#346b94" stroke-width="1.5" />
+  <path d="M558 128v4h3M554 136h5" fill="none" stroke="#346b94" stroke-width="1.2" />
+  <rect x="551" y="173" width="38" height="6" rx="3" fill="#c5d1cf" />
+  <rect x="551" y="194" width="45" height="6" rx="3" fill="#c5d1cf" />
+  <rect x="551" y="215" width="31" height="6" rx="3" fill="#c5d1cf" />
+
+  <text x="648" y="128" fill="#58737d" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10" font-weight="700" letter-spacing="2">EVIDENCE REVIEW</text>
+  <text x="648" y="157" fill="#1a2b32" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="23" font-weight="700">Urban heat response</text>
+  <rect x="1015" y="134" width="105" height="25" rx="12.5" fill="#e8eef1" />
+  <text x="1030" y="151" fill="#49636d" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="600">2 SOURCES</text>
+
+  <rect x="647" y="178" width="472" height="52" rx="7" fill="#e8f0f3" />
+  <circle cx="669" cy="204" r="12" fill="#d3e3e9" />
+  <path d="M664 204h10m-4-4 4 4-4 4" fill="none" stroke="#356b83" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+  <text x="691" y="201" fill="#263940" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="700">Shared passage found</text>
+  <text x="691" y="217" fill="#687a80" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10">Compare both sources in context</text>
+  <text x="1097" y="211" fill="#68818a" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="20">›</text>
+
+  <rect x="647" y="246" width="226" height="169" rx="7" fill="#fff" stroke="#dfe6e4" />
+  <rect x="887" y="246" width="232" height="169" rx="7" fill="#fff" stroke="#dfe6e4" />
+  <text x="663" y="269" fill="#61777e" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="9" font-weight="700" letter-spacing="1.2">SUBMISSION A</text>
+  <text x="663" y="288" fill="#30434a" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="650">Student A</text>
+  <text x="903" y="269" fill="#61777e" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="9" font-weight="700" letter-spacing="1.2">SUBMISSION B</text>
+  <text x="903" y="288" fill="#30434a" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="650">Student B</text>
+  <text x="663" y="318" fill="#45575d" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10.5">Neighborhood trees can</text>
+  <rect x="663" y="326" width="180" height="17" rx="3" fill="#f4e4ad" />
+  <text x="667" y="338" fill="#354950" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="9.5">reduce heat by providing shade</text>
+  <text x="663" y="361" fill="#45575d" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10.5">along neighborhood sidewalks.</text>
+  <text x="663" y="394" fill="#829197" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="9">Original text · paragraph 2</text>
+  <text x="903" y="318" fill="#45575d" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10.5">Planting trees can</text>
+  <rect x="903" y="326" width="180" height="17" rx="3" fill="#f4e4ad" />
+  <text x="907" y="338" fill="#354950" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="9.5">reduce heat by providing shade</text>
+  <text x="903" y="361" fill="#45575d" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10.5">near public walking routes.</text>
+  <text x="903" y="394" fill="#829197" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="9">Original text · paragraph 3</text>
+
+  <rect x="647" y="431" width="472" height="36" rx="6" fill="#f1f5f4" />
+  <circle cx="664" cy="449" r="7" fill="#dce9e5" />
+  <text x="662" y="453" fill="#466c60" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10" font-weight="700">i</text>
+  <text x="679" y="453" fill="#556c70" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10">A match is evidence to review, not a finding of misconduct.</text>
+</svg>
