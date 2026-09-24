@@ -1,8 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { resetInvokeImpl, setInvokeImpl } from "../lib/tauri";
-import { createFakeSessions, renderRouteAt } from "../test-utils";
+import {
+  createFakeSessions,
+  renderRouteAt,
+  sessionFixture,
+  studentFixture,
+  submissionFixture,
+} from "../test-utils";
 
 function renderWithFake(path: string) {
   setInvokeImpl(createFakeSessions().invoke);
@@ -112,5 +118,45 @@ describe("sessions flow", () => {
     await user.click(screen.getByRole("link", { name: /sessions/i }));
     const list = await screen.findByRole("list", { name: /sessions/i });
     expect(within(list).getByRole("link", { name: /history essay/i })).toBeInTheDocument();
+  });
+
+  it("exports selected sessions as separate portable packages", async () => {
+    const user = userEvent.setup();
+    const seed = {
+      sessions: [
+        sessionFixture({ id: "session-history", name: "History Essay" }),
+        sessionFixture({ id: "session-science", name: "Science Report" }),
+      ],
+      students: [
+        studentFixture({ id: "history-a", session_id: "session-history" }),
+        studentFixture({ id: "history-b", session_id: "session-history", display_name: "Ben" }),
+        studentFixture({ id: "science-a", session_id: "session-science" }),
+        studentFixture({ id: "science-b", session_id: "session-science", display_name: "Ben" }),
+      ],
+      submissions: [
+        submissionFixture({ id: "history-sub-a", student_id: "history-a", session_id: "session-history" }),
+        submissionFixture({ id: "history-sub-b", student_id: "history-b", session_id: "session-history" }),
+        submissionFixture({ id: "science-sub-a", student_id: "science-a", session_id: "session-science" }),
+        submissionFixture({ id: "science-sub-b", student_id: "science-b", session_id: "session-science" }),
+      ],
+    };
+    const { invoke } = createFakeSessions(seed);
+    await invoke("analyze_session", { sessionId: "session-history" });
+    await invoke("analyze_session", { sessionId: "session-science" });
+    const observedInvoke = vi.fn(invoke);
+    setInvokeImpl(observedInvoke);
+    renderRouteAt("/sessions");
+
+    await screen.findByRole("heading", { name: /^sessions$/i });
+    await user.click(screen.getByRole("checkbox", { name: /select all visible sessions/i }));
+    await user.click(screen.getByRole("button", { name: /export 2 sessions/i }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /saved 2 separate \.plagpack files to \/tmp/i,
+    );
+    expect(observedInvoke).toHaveBeenCalledWith("export_sessions_as_plagpacks", {
+      sessionIds: ["session-history", "session-science"],
+    });
+    expect(screen.getByRole("checkbox", { name: /select all visible sessions/i })).not.toBeChecked();
   });
 });

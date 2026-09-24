@@ -5,7 +5,7 @@ import {
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
-import { Trash2, UserPlus } from "lucide-react";
+import { Download, Trash2, UserPlus } from "lucide-react";
 import { PageHeader } from "@/components/common/PageHeader";
 import { EmptyState } from "@/components/common/EmptyState";
 import { LoadingState } from "@/components/common/LoadingState";
@@ -15,6 +15,7 @@ import { StatusBadge } from "@/components/common/StatusBadge";
 import { AnalysisSection } from "@/components/analysis/AnalysisSection";
 import { SubmissionDialog } from "@/components/submissions/SubmissionDialog";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,6 +32,7 @@ import {
   addStudent,
   asSessionsError,
   deleteSession,
+  exportSessionsAsPlagpacks,
   getSession,
   listStudents,
   listSubmissions,
@@ -414,6 +416,11 @@ export function SessionDetailPage() {
   const [studentName, setStudentName] = React.useState("");
   const [studentError, setStudentError] = React.useState<string | null>(null);
   const [dialogFor, setDialogFor] = React.useState<string | null>(null);
+  const [packExporting, setPackExporting] = React.useState(false);
+  const [packExportMessage, setPackExportMessage] = React.useState<{
+    kind: "ok" | "error";
+    text: string;
+  } | null>(null);
   const enabled = sessionId !== undefined && sessionId !== "";
 
   const sessionQuery = useQuery({
@@ -508,13 +515,52 @@ export function SessionDetailPage() {
     await navigate({ to: "/sessions" });
   }
 
+  async function onExportSession(): Promise<void> {
+    setPackExporting(true);
+    setPackExportMessage(null);
+    try {
+      const paths = await exportSessionsAsPlagpacks([session.id]);
+      setPackExportMessage({
+        kind: "ok",
+        text: paths
+          ? `Saved anonymized .plagpack: ${paths[0]}`
+          : "Export cancelled. No file was written.",
+      });
+    } catch (cause) {
+      setPackExportMessage({ kind: "error", text: asSessionsError(cause).message });
+    } finally {
+      setPackExporting(false);
+    }
+  }
+
   return (
     <div>
       <PageHeader
         title={session.name}
         description={session.subject ?? "No subject set."}
-        actions={<StatusBadge status={session.status} />}
+        actions={
+          <>
+            <Button
+              variant="outline"
+              disabled={packExporting}
+              onClick={() => void onExportSession()}
+            >
+              <Download className="h-4 w-4" aria-hidden />
+              {packExporting ? "Preparing…" : "Export .plagpack"}
+            </Button>
+            <StatusBadge status={session.status} />
+          </>
+        }
       />
+      {packExportMessage ? (
+        <Alert
+          role={packExportMessage.kind === "error" ? "alert" : "status"}
+          variant={packExportMessage.kind === "error" ? "destructive" : "default"}
+          className="mb-4"
+        >
+          <AlertDescription className="break-all">{packExportMessage.text}</AlertDescription>
+        </Alert>
+      ) : null}
 
       <RenameSessionForm key={session.id} session={session} />
 

@@ -150,29 +150,38 @@ describe("reference libraries", () => {
     expect(db.referenceLibraries).toHaveLength(1);
   });
 
-  it("exports a portable archive with an unambiguous .plagpack download", async () => {
+  it("exports a portable archive and shows its selected save path", async () => {
     const user = userEvent.setup();
     const { invoke } = createFakeSessions({ referenceLibraries: [library] });
-    setInvokeImpl(invoke);
-    const originalCreate = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
-    const originalRevoke = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
-    const createObjectURL = vi.fn(() => "blob:test-pack");
-    const revokeObjectURL = vi.fn();
-    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
-    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
-    try {
-      renderRouteAt("/reference-libraries");
-      await user.click(await screen.findByRole("button", { name: /export \.plagpack/i }));
-      expect(await screen.findByRole("status")).toHaveTextContent(/exported “biology 2025” as an anonymized \.plagpack/i);
-      expect(createObjectURL).toHaveBeenCalledOnce();
-      expect(click).toHaveBeenCalledOnce();
-    } finally {
-      click.mockRestore();
-      if (originalCreate) Object.defineProperty(URL, "createObjectURL", originalCreate);
-      else Reflect.deleteProperty(URL, "createObjectURL");
-      if (originalRevoke) Object.defineProperty(URL, "revokeObjectURL", originalRevoke);
-      else Reflect.deleteProperty(URL, "revokeObjectURL");
-    }
+    const observedInvoke = vi.fn(invoke);
+    setInvokeImpl(observedInvoke);
+    renderRouteAt("/reference-libraries");
+    await user.click(await screen.findByRole("button", { name: /export \.plagpack/i }));
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /saved “biology 2025” as an anonymized \.plagpack: \/tmp\/biology 2025\.plagpack/i,
+    );
+    expect(observedInvoke).toHaveBeenCalledWith("export_reference_library", {
+      libraryId: library.id,
+    });
+  });
+
+  it("exports an analyzed session directly without requiring a separate archive step", async () => {
+    const user = userEvent.setup();
+    const { invoke } = createFakeSessions(currentSessionSeed());
+    const observedInvoke = vi.fn(invoke);
+    setInvokeImpl(observedInvoke);
+    renderRouteAt("/sessions/current-session");
+
+    await screen.findByRole("heading", { name: /biology 2026/i });
+    await user.click(await screen.findByRole("button", { name: /analyze session/i }));
+    await screen.findByRole("heading", { name: /per-student overlap/i });
+    await user.click(screen.getByRole("button", { name: /export \.plagpack/i }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /saved anonymized \.plagpack: \/tmp\/biology 2026\.plagpack/i,
+    );
+    expect(observedInvoke).toHaveBeenCalledWith("export_sessions_as_plagpacks", {
+      sessionIds: ["current-session"],
+    });
   });
 });

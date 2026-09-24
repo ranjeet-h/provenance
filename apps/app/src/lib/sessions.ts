@@ -131,6 +131,14 @@ export function listSessions(): Promise<Session[]> {
   return call("list_sessions", {}, z.array(SessionSchema));
 }
 
+export function exportSessionsAsPlagpacks(sessionIds: string[]): Promise<string[] | null> {
+  return call(
+    "export_sessions_as_plagpacks",
+    { sessionIds },
+    z.array(z.string()).nullable(),
+  );
+}
+
 export function createSession(input: { name: string; subject?: string | null }): Promise<Session> {
   return call(
     "create_session",

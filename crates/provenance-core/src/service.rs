@@ -349,6 +349,65 @@ pub async fn export_reference_library(
     .map_err(|err| CoreError::validation(err.to_string()))
 }
 
+/// Export a session directly as an anonymized portable reference library.
+/// The session must still have a saved analysis for its current inputs.
+pub async fn validate_session_can_export_plagpack(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> Result<(), CoreError> {
+    SessionRepo::get(pool, session_id).await?;
+    let submissions = SubmissionRepo::list_by_session(pool, session_id).await?;
+    let source_count = submissions
+        .iter()
+        .filter(|submission| !submission.original_text.trim().is_empty())
+        .count();
+    if source_count < 2 {
+        return Err(CoreError::validation(
+            "export requires at least two non-empty student submissions",
+        ));
+    }
+    let input_hash = analysis::session_analysis_input_hash(pool, session_id).await?;
+    let report = AnalysisRepo::result_for_input(pool, session_id, &input_hash)
+        .await?
+        .ok_or_else(|| {
+            CoreError::validation("run analysis for the current session inputs before exporting")
+        })?;
+    let _: analysis::ExactAnalysis = serde_json::from_str(&report).map_err(|_| {
+        CoreError::validation("the saved analysis is corrupt and the session cannot be exported")
+    })?;
+    Ok(())
+}
+
+pub async fn export_session_plagpack(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> Result<Vec<u8>, CoreError> {
+    validate_session_can_export_plagpack(pool, session_id).await?;
+    let session = SessionRepo::get(pool, session_id).await?;
+    let submissions = SubmissionRepo::list_by_session(pool, session_id).await?;
+    let sources: Vec<provenance_report::plagpack::PackSourceDocument> = submissions
+        .into_iter()
+        .filter(|submission| !submission.original_text.trim().is_empty())
+        .map(
+            |submission| provenance_report::plagpack::PackSourceDocument {
+                source_type: submission.source_type.as_str().to_string(),
+                original_text: submission.original_text,
+                content_sha256: submission.content_sha256,
+            },
+        )
+        .collect();
+    provenance_report::plagpack::export_plagpack(
+        &session.name,
+        provenance_report::plagpack::PackEngineVersions {
+            fingerprint: provenance_match::FINGERPRINT_VERSION,
+            normalization: provenance_match::NORMALIZATION_VERSION,
+            modified: provenance_match::MODIFIED_VERSION,
+        },
+        &sources,
+    )
+    .map_err(|err| CoreError::validation(err.to_string()))
+}
+
 pub async fn import_reference_library(
     pool: &SqlitePool,
     bytes: &[u8],

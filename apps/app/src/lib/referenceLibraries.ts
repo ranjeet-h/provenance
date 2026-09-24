@@ -94,8 +94,8 @@ export function deleteReferenceLibrary(id: string): Promise<void> {
   return callVoid("delete_reference_library", { id });
 }
 
-export function exportReferenceLibrary(id: string): Promise<number[]> {
-  return call("export_reference_library", { libraryId: id }, z.array(z.number().int().min(0).max(255)));
+export function exportReferenceLibrary(id: string): Promise<string | null> {
+  return call("export_reference_library", { libraryId: id }, z.string().nullable());
 }
 
 export function importReferenceLibrary(bytes: number[]): Promise<ReferenceLibrary> {

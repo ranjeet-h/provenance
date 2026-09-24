@@ -158,6 +158,66 @@ fn export_delete_import_and_compare_preserves_anonymous_historical_evidence() {
 }
 
 #[test]
+fn session_can_be_exported_without_creating_an_archive_entry() {
+    let (_dir, pool) = fresh_db();
+    let session_id = create_session(&pool, "History Essay");
+    let student_a = add_student(&pool, &session_id, "Private Student A");
+    let student_b = add_student(&pool, &session_id, "Private Student B");
+    save_text(&pool, &student_a, COPIED);
+    save_text(
+        &pool,
+        &student_b,
+        "Independent writing about tectonic plates and continental drift.",
+    );
+    save_analysis(&pool, &session_id);
+
+    let pack = block_on(service::export_session_plagpack(&pool, &session_id))
+        .expect("export session directly");
+    let portable = provenance_report::plagpack::import_plagpack(&pack).expect("verify package");
+
+    assert_eq!(portable.library_name, "History Essay");
+    assert_eq!(portable.documents.len(), 2);
+    assert!(portable
+        .documents
+        .iter()
+        .all(|document| document.source_label.starts_with("Document ")));
+    let libraries = block_on(service::list_reference_libraries(&pool)).expect("list libraries");
+    assert!(
+        libraries.is_empty(),
+        "export must not mutate local archives"
+    );
+    let imported = block_on(service::import_reference_library(&pool, &pack))
+        .expect("directly exported session pack imports");
+    assert_eq!(imported.name, "History Essay");
+    let imported_sources =
+        block_on(service::list_reference_submissions(&pool, &imported.id)).expect("imported docs");
+    assert_eq!(imported_sources.len(), 2);
+    assert!(imported_sources
+        .iter()
+        .all(|source| source.source_label.starts_with("Document ")));
+}
+
+#[test]
+fn session_export_requires_analysis_for_the_current_inputs() {
+    let (_dir, pool) = fresh_db();
+    let session_id = create_session(&pool, "History Essay");
+    let student_a = add_student(&pool, &session_id, "Student A");
+    let student_b = add_student(&pool, &session_id, "Student B");
+    save_text(&pool, &student_a, COPIED);
+    save_text(
+        &pool,
+        &student_b,
+        "Independent writing about tectonic plates and continental drift.",
+    );
+    save_analysis(&pool, &session_id);
+    save_text(&pool, &student_b, "Changed after the analysis was saved.");
+
+    let error = block_on(service::export_session_plagpack(&pool, &session_id))
+        .expect_err("stale analysis must not be exported");
+    assert!(error.to_string().contains("current session inputs"));
+}
+
+#[test]
 fn invalid_package_is_rejected_without_creating_a_partial_library() {
     let (_dir, pool) = fresh_db();
     let error = block_on(service::import_reference_library(&pool, b"not a package"))

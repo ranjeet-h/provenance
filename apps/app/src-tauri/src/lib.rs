@@ -1,6 +1,7 @@
 // Provenance Tauri shell: thin command adapters over provenance-core.
 // Business behavior lives in the core crates; this file only adapts the IPC boundary.
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -293,14 +294,218 @@ async fn delete_reference_library(db: State<'_, DbState>, id: String) -> Result<
         .map_err(CommandError::from)
 }
 
+fn safe_pack_file_stem(name: &str) -> String {
+    let mut stem = String::new();
+    let mut last_was_separator = false;
+    for character in name.trim().chars() {
+        if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+            stem.push(character);
+            last_was_separator = false;
+        } else if !last_was_separator {
+            stem.push('-');
+            last_was_separator = true;
+        }
+        if stem.len() >= 100 {
+            break;
+        }
+    }
+    let stem = stem.trim_matches(['-', '.', '_']);
+    if stem.is_empty() {
+        "reference-library".into()
+    } else {
+        stem.to_string()
+    }
+}
+
+fn write_plagpack_to_path(
+    selected_path: Option<PathBuf>,
+    bytes: &[u8],
+) -> Result<Option<PathBuf>, CommandError> {
+    let Some(mut path) = selected_path else {
+        return Ok(None);
+    };
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_none_or(|extension| !extension.eq_ignore_ascii_case("plagpack"))
+    {
+        path.set_extension("plagpack");
+    }
+    if !bytes.starts_with(b"PK\x03\x04") {
+        return Err(CommandError {
+            code: "protocol",
+            message: "The generated reference library is not a valid .plagpack archive.".into(),
+        });
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                CommandError {
+                    code: "conflict",
+                    message: "A file already exists at that location. Choose a different filename or folder.".into(),
+                }
+            } else {
+                CommandError {
+                    code: "filesystem",
+                    message: format!("Could not create the .plagpack file: {error}"),
+                }
+            }
+        })?;
+    if let Err(error) = file.write_all(bytes) {
+        drop(file);
+        let _ = std::fs::remove_file(&path);
+        return Err(CommandError {
+            code: "filesystem",
+            message: format!("Could not finish writing the .plagpack file: {error}"),
+        });
+    }
+    Ok(Some(path))
+}
+
 #[tauri::command]
 async fn export_reference_library(
+    app: AppHandle,
     db: State<'_, DbState>,
     library_id: String,
-) -> Result<Vec<u8>, CommandError> {
-    service::export_reference_library(&db.0, &library_id)
+) -> Result<Option<String>, CommandError> {
+    let library = provenance_core::service::list_reference_libraries(&db.0)
         .await
-        .map_err(CommandError::from)
+        .map_err(CommandError::from)?
+        .into_iter()
+        .find(|library| library.id == library_id)
+        .ok_or_else(|| CommandError::from(CoreError::not_found("reference library not found")))?;
+    let bytes = service::export_reference_library(&db.0, &library_id)
+        .await
+        .map_err(CommandError::from)?;
+    let suggested_name = format!("{}.plagpack", safe_pack_file_stem(&library.name));
+    let selected_path = app
+        .dialog()
+        .file()
+        .set_title("Export reference library")
+        .set_file_name(&suggested_name)
+        .add_filter("Provenance reference library", &["plagpack"])
+        .blocking_save_file()
+        .map(|path| path.into_path())
+        .transpose()
+        .map_err(|_| CommandError {
+            code: "filesystem",
+            message: "The selected save location is not available on this device.".into(),
+        })?;
+    write_plagpack_to_path(selected_path, &bytes)
+        .map(|path| path.map(|path| path.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+async fn export_sessions_as_plagpacks(
+    app: AppHandle,
+    db: State<'_, DbState>,
+    session_ids: Vec<String>,
+) -> Result<Option<Vec<String>>, CommandError> {
+    if session_ids.is_empty() {
+        return Err(CommandError {
+            code: "validation",
+            message: "Select at least one session to export.".into(),
+        });
+    }
+    let unique_ids: HashSet<&str> = session_ids.iter().map(String::as_str).collect();
+    if unique_ids.len() != session_ids.len() {
+        return Err(CommandError {
+            code: "validation",
+            message: "A session can only be exported once per batch.".into(),
+        });
+    }
+    for session_id in &session_ids {
+        service::validate_session_can_export_plagpack(&db.0, session_id)
+            .await
+            .map_err(CommandError::from)?;
+    }
+
+    if session_ids.len() == 1 {
+        let session = service::get_session(&db.0, &session_ids[0])
+            .await
+            .map_err(CommandError::from)?;
+        let bytes = service::export_session_plagpack(&db.0, &session_ids[0])
+            .await
+            .map_err(CommandError::from)?;
+        let suggested_name = format!("{}.plagpack", safe_pack_file_stem(&session.name));
+        let selected_path = app
+            .dialog()
+            .file()
+            .set_title("Export session as .plagpack")
+            .set_file_name(suggested_name)
+            .add_filter("Provenance reference library", &["plagpack"])
+            .blocking_save_file()
+            .map(|path| path.into_path())
+            .transpose()
+            .map_err(|_| CommandError {
+                code: "filesystem",
+                message: "The selected save location is not available on this device.".into(),
+            })?;
+        let Some(selected_path) = selected_path else {
+            return Ok(None);
+        };
+        let saved = write_plagpack_to_path(Some(selected_path), &bytes)?;
+        return Ok(saved.map(|path| vec![path.to_string_lossy().into_owned()]));
+    }
+
+    let Some(directory) = app
+        .dialog()
+        .file()
+        .set_title("Choose a folder for the exported session libraries")
+        .blocking_pick_folder()
+        .map(|path| path.into_path())
+        .transpose()
+        .map_err(|_| CommandError {
+            code: "filesystem",
+            message: "The selected folder is not available on this device.".into(),
+        })?
+    else {
+        return Ok(None);
+    };
+    let mut paths = Vec::with_capacity(session_ids.len());
+    let mut filename_counts = std::collections::HashMap::<String, usize>::new();
+    for session_id in &session_ids {
+        let result = async {
+            let session = service::get_session(&db.0, session_id)
+                .await
+                .map_err(CommandError::from)?;
+            let bytes = service::export_session_plagpack(&db.0, session_id)
+                .await
+                .map_err(CommandError::from)?;
+            let stem = safe_pack_file_stem(&session.name);
+            let count = filename_counts.entry(stem.clone()).or_default();
+            *count += 1;
+            let filename = if *count == 1 {
+                format!("{stem}.plagpack")
+            } else {
+                format!("{stem}-{}.plagpack", count)
+            };
+            let path = directory.join(filename);
+            write_plagpack_to_path(Some(path), &bytes)?.ok_or_else(|| CommandError {
+                code: "filesystem",
+                message: "The selected export location was cancelled.".into(),
+            })
+        }
+        .await;
+        match result {
+            Ok(path) => paths.push(path),
+            Err(error) => {
+                for path in &paths {
+                    let _ = std::fs::remove_file(path);
+                }
+                return Err(error);
+            }
+        }
+    }
+    Ok(Some(
+        paths
+            .into_iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect(),
+    ))
 }
 
 #[tauri::command]
@@ -770,6 +975,7 @@ pub fn run() {
             set_session_reference_libraries,
             delete_reference_library,
             export_reference_library,
+            export_sessions_as_plagpacks,
             import_reference_library,
             inspect_text
         ])
@@ -821,6 +1027,44 @@ mod tests {
             std::fs::read_dir(base.path()).expect("directory").count(),
             0
         );
+    }
+
+    #[test]
+    fn cancelling_plagpack_save_writes_nothing() {
+        let saved = write_plagpack_to_path(None, b"PK\x03\x04archive")
+            .expect("cancellation is not an error");
+        assert_eq!(saved, None);
+    }
+
+    #[test]
+    fn plagpack_save_adds_extension_and_never_overwrites_existing_files() {
+        let base = tempfile::tempdir().expect("temp directory");
+        let selected = base.path().join("biology");
+        let saved = write_plagpack_to_path(Some(selected.clone()), b"PK\x03\x04archive")
+            .expect("save archive")
+            .expect("selected location");
+
+        assert_eq!(saved, base.path().join("biology.plagpack"));
+        assert_eq!(
+            std::fs::read(&saved).expect("saved pack"),
+            b"PK\x03\x04archive"
+        );
+        let error = write_plagpack_to_path(Some(saved.clone()), b"PK\x03\x04replacement")
+            .expect_err("an existing archive must not be overwritten");
+        assert_eq!(error.code, "conflict");
+        assert_eq!(
+            std::fs::read(&saved).expect("original pack remains"),
+            b"PK\x03\x04archive"
+        );
+    }
+
+    #[test]
+    fn pack_file_names_are_safe_and_never_empty() {
+        assert_eq!(
+            safe_pack_file_stem("Biology / Fall 2026"),
+            "Biology-Fall-2026"
+        );
+        assert_eq!(safe_pack_file_stem("../../"), "reference-library");
     }
 
     #[test]

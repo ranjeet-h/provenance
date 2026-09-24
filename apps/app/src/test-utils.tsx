@@ -347,8 +347,34 @@ export function createFakeSessions(seed?: Partial<FakeDb>): {
         }
         return Promise.resolve(null);
       }
-      case "export_reference_library":
-        return Promise.resolve([0x50, 0x4b, 0x03, 0x04]);
+      case "export_reference_library": {
+        const library = db.referenceLibraries.find((item) => item.id === args["libraryId"]);
+        return library
+          ? Promise.resolve(`/tmp/${library.name}.plagpack`)
+          : fail("not_found", "reference library not found");
+      }
+      case "export_sessions_as_plagpacks": {
+        const sessionIds = args["sessionIds"];
+        if (!Array.isArray(sessionIds) || sessionIds.some((id) => typeof id !== "string")) {
+          return fail("validation", "session ids must be strings");
+        }
+        const selectedSessions = sessionIds.map((id) =>
+          db.sessions.find((session) => session.id === id),
+        );
+        const invalidIndex = selectedSessions.findIndex((session, index) => {
+          const id = sessionIds[index];
+          const submissionCount = db.submissions.filter(
+            (submission) => submission.session_id === id && submission.original_text.trim() !== "",
+          ).length;
+          return !session || !savedAnalyses.has(String(id)) || submissionCount < 2;
+        });
+        if (invalidIndex >= 0) {
+          return fail("validation", "run analysis with two submissions before exporting");
+        }
+        return Promise.resolve(
+          selectedSessions.map((session) => `/tmp/${session?.name ?? "session"}.plagpack`),
+        );
+      }
       case "import_reference_library": {
         const library: ReferenceLibrary = {
           id: nextId("library"),

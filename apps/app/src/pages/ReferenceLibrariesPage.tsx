@@ -96,22 +96,12 @@ export function ReferenceLibrariesPage() {
     setMessage(null);
     setExportingId(id);
     try {
-      const bytes = await exportReferenceLibrary(id);
-      const blob = new Blob([Uint8Array.from(bytes)], {
-        type: "application/zip",
-      });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      const safeName =
-        name
-          .normalize("NFKD")
-          .replace(/[^a-zA-Z0-9._-]+/g, "-")
-          .replace(/^-+|-+$/g, "") || "reference-library";
-      link.href = url;
-      link.download = `${safeName}.plagpack`;
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 0);
-      setMessage(`Exported “${name}” as an anonymized .plagpack.`);
+      const savedPath = await exportReferenceLibrary(id);
+      setMessage(
+        savedPath
+          ? `Saved “${name}” as an anonymized .plagpack: ${savedPath}`
+          : "Export cancelled. No file was written.",
+      );
     } catch (cause) {
       setError(asSessionsError(cause).message);
     } finally {

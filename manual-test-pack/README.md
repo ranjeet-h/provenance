@@ -44,9 +44,11 @@ This separate session checks that the same selectable text survives pasted text,
 ## 4. Exercise local reference-library export/import
 
 1. Return to `Manual overlap test` and use **Archive this session** to create `Manual Test Library`. This is the intended comparison source for the self-check fixture. At least two non-empty submissions and a saved analysis are required.
-2. Open **Reference Libraries** and choose **Export .plagpack** for `Manual Test Library`. Keep track of where the downloaded file was saved.
-3. To test importing rather than keeping two copies, delete `Manual Test Library` from the app and confirm the deletion. This only deletes the local library entry; it does not delete the original session or the downloaded pack.
+2. Open **Reference Libraries** and choose **Export .plagpack** for `Manual Test Library`. The native save dialog lets you choose the filename and destination; the app then shows the saved path. Canceling writes nothing.
+3. To test importing rather than keeping two copies, delete `Manual Test Library` from the app and confirm the deletion. This only deletes the local library entry; it does not delete the original session or the saved pack.
 4. Choose **Import archive** and select the `.plagpack` file you just exported. Confirm that the imported library appears and its submission count is populated when opened.
+
+You can also export a session directly from its detail page after its current analysis is saved. On **Sessions**, select one or more analyzed sessions and choose **Export .plagpack**; one selected session opens a save dialog, while multiple sessions prompt for a destination folder and are saved as separate `.plagpack` files so unrelated assignments are not merged. Draft sessions or sessions whose submissions changed since analysis must be analyzed again before export.
 
 ## 5. Exercise session locking and certified reports
 
